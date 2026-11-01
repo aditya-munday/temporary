@@ -117,16 +117,16 @@ int main(void) {
             }
             HostileKind::FileReadOutsideSandbox => {
                 r#"#include <stdio.h>
+#include <stdlib.h>
 int main(void) {
-    const char *paths[] = {
-        "/etc/shadow", "/etc/passwd", "/proc/self/environ",
-        "/var/run/docker.sock", "/root/.ssh/id_rsa", "/home/openhands/.config/gh/hosts.yml"
-    };
+    const char *path = getenv("CCX_HOST_SECRET_PATH");
+    if (!path) { return 0; }
+    FILE *f = fopen(path, "rb");
+    if (!f) { return 0; }
     char buf[256];
-    for (unsigned i = 0; i < sizeof paths / sizeof paths[0]; i++) {
-        FILE *f = fopen(paths[i], "r");
-        if (f) { fgets(buf, sizeof buf, f); fclose(f); }
-    }
+    size_t n;
+    while ((n = fread(buf, 1, sizeof buf, f)) > 0) { fwrite(buf, 1, n, stdout); }
+    fclose(f);
     return 0;
 }
 "#
@@ -145,7 +145,11 @@ int main(void) {
     a.sin_family = AF_INET;
     a.sin_port = htons(80);
     inet_pton(AF_INET, "1.1.1.1", &a.sin_addr);
-    connect(s, (struct sockaddr *)&a, sizeof a);
+    if (connect(s, (struct sockaddr *)&a, sizeof a) == 0) {
+        puts("CCX_NETWORK_CONNECTED");
+        close(s);
+        return 42;
+    }
     close(s);
     return 0;
 }
@@ -158,7 +162,7 @@ int main(void) {
 int main(void) {
     const char *targets[] = {
         "/work/capsule.json", "/work/metrics.json", "/work/out/result.json",
-        "/work/.ccx-harness", "/proc/sys/kernel/perf_event_paranoid"
+        "/work/.ccx-harness", "/proc/sys/kernel/perf_event_paranoid", "/in/main.c"
     };
     for (unsigned i = 0; i < sizeof targets / sizeof targets[0]; i++) {
         FILE *f = fopen(targets[i], "w");
@@ -213,20 +217,52 @@ pub struct HostileCase {
 pub fn hostile_suite() -> Vec<HostileCase> {
     use HostileKind::*;
     vec![
-        HostileCase { kind: InfiniteLoop, expect: Containment::Timeout, note: "must be killed at the wall-clock limit".into() },
+        HostileCase {
+            kind: InfiniteLoop,
+            expect: Containment::Timeout,
+            note: "must be killed at the wall-clock limit".into(),
+        },
         // RLIMIT_NPROC makes fork() fail, so the bomb defuses itself. The
         // expectation is that it stops fast, not that it is killed.
-        HostileCase { kind: ForkBomb, expect: Containment::NoEffect, note: "fork() must fail at the pids limit; the host must be unaffected".into() },
-        HostileCase { kind: HugeOutput, expect: Containment::OutputCap, note: "stdout must be capped and the process killed".into() },
+        HostileCase {
+            kind: ForkBomb,
+            expect: Containment::NoEffect,
+            note: "fork() must fail at the pids limit; the host must be unaffected".into(),
+        },
+        HostileCase {
+            kind: HugeOutput,
+            expect: Containment::OutputCap,
+            note: "stdout must be capped and the process killed".into(),
+        },
         // RLIMIT_AS makes malloc return NULL, so the bomb ends cleanly inside
         // its own address space rather than being OOM-killed.
-        HostileCase { kind: MemoryBomb, expect: Containment::NoEffect, note: "malloc must fail at the address-space limit; peak RSS stays bounded".into() },
-        HostileCase { kind: FileReadOutsideSandbox, expect: Containment::NoEffect, note: "no host secret may be readable".into() },
-        HostileCase { kind: NetworkAttempt, expect: Containment::Denied, note: "network is disabled; connect must fail".into() },
-        HostileCase { kind: TamperWithResults, expect: Containment::Denied, note: "rootfs is read-only; harness state is not writable".into() },
+        HostileCase {
+            kind: MemoryBomb,
+            expect: Containment::NoEffect,
+            note: "malloc must fail at the address-space limit; peak RSS stays bounded".into(),
+        },
+        HostileCase {
+            kind: FileReadOutsideSandbox,
+            expect: Containment::NoEffect,
+            note: "no host secret may be readable".into(),
+        },
+        HostileCase {
+            kind: NetworkAttempt,
+            expect: Containment::Denied,
+            note: "network is disabled; connect must fail".into(),
+        },
+        HostileCase {
+            kind: TamperWithResults,
+            expect: Containment::Denied,
+            note: "rootfs is read-only; harness state is not writable".into(),
+        },
         // RLIMIT_STACK turns runaway recursion into a SIGSEGV inside the
         // sandbox, so the host stack is never at risk.
-        HostileCase { kind: DeepRecursion, expect: Containment::Denied, note: "stack is fixed; overflow must be contained, not crash the host".into() },
+        HostileCase {
+            kind: DeepRecursion,
+            expect: Containment::Denied,
+            note: "stack is fixed; overflow must be contained, not crash the host".into(),
+        },
     ]
 }
 
@@ -335,18 +371,24 @@ impl SandboxPolicy {
             self.pids_limit.to_string(),
             "--cpus".into(),
             format!("{}", self.cpus),
-            // No ambient environment leaks in.
-            "--env".into(),
-            "LANG=C".into(),
-            "--env".into(),
-            "LC_ALL=C".into(),
-            "--env".into(),
-            "TZ=UTC".into(),
-            "--env".into(),
-            "SOURCE_DATE_EPOCH=0".into(),
-            "--env".into(),
-            "PATH=/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin".into(),
         ]);
+
+        // A container's hostname is random per `docker run` unless it is
+        // pinned. The measured process sees it as the `HOSTNAME` environment
+        // variable, and glibc's `__tunables_init` walks the whole environment,
+        // so a differing hostname shifts the loader's instruction and branch
+        // counts by a few counts. That is enough to break the cross-machine
+        // determinism gate, so the hostname is fixed here.
+        argv.push("--hostname".into());
+        argv.push(crate::capsule::CCX_HOSTNAME.to_string());
+
+        // The canonical environment, from a single source of truth. Every
+        // variable that would otherwise be inherited or image-provided is set
+        // explicitly so the measured environment is byte-identical everywhere.
+        for (key, value) in crate::capsule::FIXED_ENV {
+            argv.push("--env".into());
+            argv.push(format!("{key}={value}"));
+        }
 
         if let Some(cpuset) = &self.cpuset {
             argv.push("--cpuset-cpus".into());
@@ -394,7 +436,10 @@ mod tests {
     fn never_runs_as_root() {
         let p = SandboxPolicy::default();
         let argv = p.argv("img@sha256:aa", &["/bin/true".into()]);
-        let idx = argv.iter().position(|a| a == "--user").expect("--user present");
+        let idx = argv
+            .iter()
+            .position(|a| a == "--user")
+            .expect("--user present");
         assert_eq!(argv[idx + 1], "65534:65534");
         assert!(!p.user.starts_with("0:"));
     }
@@ -417,7 +462,10 @@ mod tests {
             .find(|a| a.starts_with("/work/scratch:"))
             .expect("scratch tmpfs present");
         assert!(scratch.contains(",exec"), "scratch must be exec: {scratch}");
-        assert!(!scratch.contains(",noexec"), "scratch must not be noexec: {scratch}");
+        assert!(
+            !scratch.contains(",noexec"),
+            "scratch must not be noexec: {scratch}"
+        );
 
         let tmp = argv
             .iter()
@@ -439,6 +487,35 @@ mod tests {
         for flag in ["--memory", "--pids-limit", "--cpus", "--cpuset-cpus"] {
             assert!(argv.iter().any(|a| a == flag), "missing {flag}");
         }
+    }
+
+    #[test]
+    fn hostname_is_pinned() {
+        // Docker would otherwise assign a random hostname per run, which the
+        // measured process sees as HOSTNAME and which shifts loader counts.
+        let argv = SandboxPolicy::default().argv("img@sha256:aa", &["/bin/true".into()]);
+        let idx = argv
+            .iter()
+            .position(|a| a == "--hostname")
+            .expect("--hostname present");
+        assert_eq!(argv[idx + 1], crate::capsule::CCX_HOSTNAME);
+    }
+
+    #[test]
+    fn environment_is_the_canonical_fixed_set() {
+        let argv = SandboxPolicy::default().argv("img@sha256:aa", &["/bin/true".into()]);
+        let mut expected: Vec<String> = crate::capsule::FIXED_ENV
+            .iter()
+            .map(|(k, v)| format!("{k}={v}"))
+            .collect();
+        expected.sort();
+        let mut actual: Vec<String> = argv
+            .windows(2)
+            .filter(|w| w[0] == "--env")
+            .map(|w| w[1].clone())
+            .collect();
+        actual.sort();
+        assert_eq!(actual, expected);
     }
 
     #[test]

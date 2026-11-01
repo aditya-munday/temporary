@@ -1,8 +1,12 @@
 # AGENTS.md — CodeCurrency
 
-Working directory: `/workspace/project/CodeCurrency`
-Remote: `https://github.com/aditya-munday/CodeCurrency.git` (currently empty — no commits on any branch)
+Working directory: `/workspace/project`
+Remote: `https://github.com/aditya-munday/CodeCurrency-Runtime.git`
+  (renamed from `CodeCurrency`; old URLs redirect)
+Active branch: `codex/phase1-engine` (the real engine; `main` holds only an
+  early scaffold until PR #1 merges)
 Source idea document: `/workspace/project/PLATFORM_IDEA.txt`
+Task list for the current phase: `PHASE1_AGENT_PROMPT.txt` (untracked)
 GitHub CLI: authenticated as `aditya-munday` (scopes: gist, read:org, repo, workflow)
 
 ## What this project is
@@ -221,25 +225,33 @@ code.**
 
 ## Working notes for agents
 
-- This repository is currently empty (no commits). Treat this file as the source
-  of product context until code exists.
+- `main` holds only an early scaffold. The real engine lives on
+  `codex/phase1-engine` (draft PR #1); base new work on that branch.
 - Keep every design decision aligned with the trust layer (deterministic metrics,
   uncertainty, replayability) and the "must never become" list.
 - Prefer small, verifiable increments; keep results reproducible and citable.
 - Do not push directly to `main`/`master`; use feature branches and PRs.
+- Keep this file current at the end of every working session.
 
 ## Phase 1 status (Rust engine, `crates/`)
 
-Phase 1 proves one claim: a single command builds a C++ solution, tests it,
-measures it, and emits a result anyone can replay to the same numbers. No
+Phase 1 proves one claim: a single command builds, tests, measures, and explains
+a solution, and produces a result anyone can replay to the same numbers. Seven
+build languages are first-class: C, C++, Rust, D, Zig, Odin, and Go. Execution
+is pinned to Linux x86-64; other OS/arch profiles report "unavailable". No
 website, accounts, or contests yet.
+
+Capsules are at **schema 16** (schema 15 added raw repeatability observations;
+schema 16 adds the optional `applied_tolerance` field). See `CAPSULE_SPEC.md`.
 
 ### Commands
 
-- `ccx build` — compile a solution in the pinned toolchain image. Works.
+- `ccx build` — compile a solution in the pinned toolchain image.
 - `ccx test` — run the arena solution against every size in `problem.json`.
 - `ccx measure --size S --seed N --repeat R` — produce a capsule.
 - `ccx replay <capsule.json>` — rebuild, re-measure, and compare to the capsule.
+- `ccx init`, `ccx asm`, `ccx diff`, `ccx matrix`, `ccx experiment`,
+  `ccx validate`, `ccx doctor` — see `ccx --help`.
 
 ### Layer 1: measurement truth (the trust layer)
 
@@ -271,6 +283,38 @@ Hard-won facts, each of which was a real bug:
    allocations or binary size reports a spurious `DIFF` for a stable metric.
 5. **A bare `capsule.json` has an empty parent path.** `replay` resolves the
    solution directory from the capsule's parent, falling back to `.`.
+6. **The measured container's environment is canonical, hostname included.**
+   Docker assigns a random 12-hex hostname to each `docker run` and exports it
+   as the `HOSTNAME` environment variable; glibc's `__tunables_init` walks the
+   environment, so a random hostname is a real (if small) input to the measured
+   loader work. `SandboxPolicy::argv` now passes `--hostname` so the measured
+   environment is byte-identical everywhere. Verified safe: the recorded
+   `build.env` is unchanged, so no golden moved. Note the value's *length*
+   matters, not its content, and the pinned value matches Docker's default
+   length.
+7. **The CI cross-machine gate's residual drift is CPU-model-driven, not
+   environmental, and affects Rust as well as D.** The gate failed on
+   `rust` with `branch_instructions differs across machines: [1265912.0,
+   1265912.0, 1265940.0]` and on `d-gdc` with the same +22/+28 shape. This is
+   *not* the hostname: within a single runner all 20 runs (each with a
+   different random hostname) are byte-identical, so the counts are
+   environment-independent, and the runners agree exactly whenever they land on
+   the same CPU model. The cause is work that runs before `main` and reads the
+   host CPU directly. For D that is druntime's `core.cpuid` startup probe
+   (`cpuid_initialization`, `getcacheinfoCPUID4`). For Rust it is CPU-feature
+   (ifunc) dispatch in the runtime and libc. Verified locally: varying
+   `GLIBC_TUNABLES=glibc.cpu.hwcaps=...` moves a Rust binary by ~180 branches
+   and the C++ binary by ~405, so glibc's dispatch really is inside the counted
+   region; no container setting removes it. C, C++, Zig, and Odin binaries do
+   not drift on the hosted pool. **Decision (schema 16):** the drift is
+   admitted as a bounded per-host offset through named tolerance policies
+   (`d-gdc-druntime-cpuid`, `rust-libc-ifunc-dispatch`) at `1e-3` relative over
+   the thirteen simulated Cachegrind metrics, rather than by weakening the
+   exact-equality gate. The bound sits just above the largest observed offset
+   (0.043% on Rust/C++ `branch_misses`). Raw samples must still be constant
+   within each host, so this admits a per-host offset, not within-host noise.
+   `ccx replay` applies the same recorded bound. See `CAPSULE_SPEC.md` §16 and
+   `METHODOLOGY.md`.
 
 ### Known-honest results (not bugs)
 
@@ -281,11 +325,17 @@ Hard-won facts, each of which was a real bug:
 - `peak_memory` drifts between runs because it comes from `getrusage` and is
   machine-dependent. It is labelled *indicative*, and replay attributes drift to
   the machine rather than the solution.
+- Go counter spread between fresh processes is wider than the ranking gate, so
+  Go measurements require `--repeat 20` and stay UNRANKED until the spread is
+  within the documented tolerance.
 
 ### Verified state
 
-- `cargo test --release`: 54 tests pass.
-- `ccx measure` on the naive solution: all nine metrics present and correctly
+- `cargo fmt --all -- --check`: clean.
+- `cargo clippy --workspace --all-targets -- -D warnings`: clean.
+- `cargo test --workspace`: 184 tests pass (126 core + 58 CLI), 1 ignored.
+- `python3 -m unittest scripts/test_compare_capsules.py`: 22 tests pass.
+- `ccx measure` on the naive solution: all metrics present and correctly
   labelled.
 - `ccx replay capsule.json`: exit 0, every deterministic metric matches exactly,
   only the indicative `peak_memory` drifts as expected.
