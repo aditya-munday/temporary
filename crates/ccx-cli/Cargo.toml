@@ -12,7 +12,7 @@ name = "ccx"
 path = "src/main.rs"
 
 [dependencies]
-ccx-core = { path = "../ccx-core" }
+ccx-core = { path = "../ccx-core", version = "0.1.0" }
 anyhow.workspace = true
 clap.workspace = true
 serde.workspace = true

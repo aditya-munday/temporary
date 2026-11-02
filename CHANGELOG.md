@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Add a release pipeline (`.github/workflows/release.yml`). Pushing a `v*` tag
+  builds `ccx` for x86-64 Linux, x86-64 macOS, Apple Silicon macOS, and x86-64
+  Windows, packages each as a `tar.gz`/`zip` with the README, LICENSE,
+  CHANGELOG, and capsule spec, writes a `SHA256SUMS` file, and creates a GitHub
+  release whose notes are the matching `CHANGELOG.md` section.
+
+- Add a supply-chain gate and an MSRV gate to CI. `cargo deny check advisories
+  licenses bans sources` runs against a checked-in `deny.toml`, and a separate
+  job builds and tests the workspace on the declared MSRV (1.85.0). The
+  `ccx-core` path dependency now carries a version so the wildcard-dependency
+  ban holds.
+
+## [0.1.0] - 2026-11-01
+
 - Add `ccx repeat`, the reproducibility report. It runs `measure` N separate
   times, each producing its own capsule, and reports the spread across those
   capsules for every deterministic metric against the ranking tolerance

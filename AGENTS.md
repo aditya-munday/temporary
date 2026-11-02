@@ -392,6 +392,23 @@ Hard-won facts, each of which was a real bug:
 - `ccx replay capsule.json`: exit 0, every deterministic metric matches exactly,
   only the indicative `peak_memory` drifts as expected.
 
+### Release and supply chain
+
+`.github/workflows/release.yml` runs on a `v*` tag. It builds `ccx` for
+`x86_64-unknown-linux-gnu`, `x86_64-apple-darwin`, `aarch64-apple-darwin`, and
+`x86_64-pc-windows-msvc`; packages each with the README, LICENSE, CHANGELOG,
+and capsule spec; writes a combined `SHA256SUMS`; and creates a GitHub release
+whose body is the matching `CHANGELOG.md` section. Release notes come from the
+changelog, so move the `Unreleased` entries under a `## [x.y.z] - <date>`
+heading before tagging.
+
+CI also gates the supply chain and the MSRV. `cargo deny check advisories
+licenses bans sources` runs against `deny.toml` (licenses allow-listed, wildcard
+and unknown-source dependencies denied), and a separate job builds and tests the
+workspace on Rust 1.85.0, the declared `rust-version`. The workspace sets
+`unsafe_code = "forbid"`, so any `unsafe` is a build failure, not a review
+question.
+
 ### Environment note
 
 The container's Rust toolchain and Docker images have been observed to vanish

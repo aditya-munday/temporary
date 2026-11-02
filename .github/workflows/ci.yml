@@ -35,6 +35,24 @@ jobs:
           components: rustfmt, clippy
       - run: cargo clippy --workspace --all-targets -- -D warnings
       - run: bash scripts/test-runner-artifact-cap.sh
+  msrv:
+    name: MSRV 1.85
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.0
+      - run: cargo build --workspace --all-targets
+      - run: cargo test --workspace
+  supply-chain:
+    name: cargo-deny
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.85.1
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-deny@0.20.2
+      - run: cargo deny check advisories licenses bans sources
   container-engine:
     runs-on: ubuntu-24.04
     steps:

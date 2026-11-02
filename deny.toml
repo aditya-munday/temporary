@@ -1,0 +1,40 @@
+# cargo-deny configuration. See https://embarkstudios.github.io/cargo-deny/
+#
+# The engine's dependency tree is deliberately small and audit-friendly: a
+# CLI/argument parser, serialization, a hash, and error plumbing. `cargo deny`
+# keeps it that way and blocks a license or advisory regression at review time.
+
+[graph]
+targets = [
+  { triple = "x86_64-unknown-linux-gnu" },
+  { triple = "x86_64-apple-darwin" },
+  { triple = "aarch64-apple-darwin" },
+  { triple = "x86_64-pc-windows-msvc" },
+]
+
+[advisories]
+version = 2
+yanked = "deny"
+ignore = []
+
+[licenses]
+version = 2
+# Only licenses the locked tree actually uses. Adding a dependency that pulls a
+# new license should be a deliberate, reviewed edit here, not a silent pass.
+allow = [
+  "Apache-2.0",
+  "MIT",
+  "Unicode-3.0",
+]
+confidence-threshold = 0.9
+
+[bans]
+multiple-versions = "warn"
+wildcards = "deny"
+deny = []
+skip = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+allow-registry = ["https://github.com/rust-lang/crates.io-index"]
