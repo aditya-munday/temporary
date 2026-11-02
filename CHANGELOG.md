@@ -1,6 +1,6 @@
 # Changelog
 
-## Unreleased
+## [0.1.0] - 2026-11-02
 
 - Harden the capsule parser and prove it. New `capsule_robustness` tests cover
   migration idempotency, rejection of unknown and future versions, a path from
@@ -48,7 +48,6 @@
   `ccx-core` path dependency now carries a version so the wildcard-dependency
   ban holds.
 
-## [0.1.0] - 2026-11-01
 
 - Add `ccx repeat`, the reproducibility report. It runs `measure` N separate
   times, each producing its own capsule, and reports the spread across those
