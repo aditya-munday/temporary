@@ -35,6 +35,7 @@ from a fixed Debian 13 base digest and the recorded Debian package snapshot.
 | --- | --- | --- |
 | C | GCC 13.3.0 or 14.2.0; Clang 18.1.8 or 19.1.7 | `gcc-13`, `gcc`, `clang-18`, or `clang` |
 | C++ | GCC 13.3.0 or 14.2.0; Clang 18.1.8 or 19.1.7 | `gcc-13`, `gcc`, `clang-18`, or `clang` |
+| x86-64 assembly | GCC 14.2.0 assembler (GAS) | `toolchain = "gcc"`, `language = "asm"` |
 | Rust | rustc 1.85.1 | `toolchain = "rust"` |
 | D | GDC 14.2.0 | `toolchain = "gdc"` |
 | Zig | Zig 0.17.0 | `toolchain = "zig"` |
@@ -43,10 +44,11 @@ from a fixed Debian 13 base digest and the recorded Debian package snapshot.
 
 The CLI workspace declares Rust 1.85 as its minimum version. The hosted native
 CI matrix passed with Rust 1.85.1 on Ubuntu 24.04, Windows Server 2022, macOS 15
-Intel, and macOS 15 Apple Silicon. The C, C++, Rust, D, Zig, Odin, and Go
-submission builds run inside digest-pinned Linux images, so the host compiler
-installation is not used to build a measured solution. `ccx asm` emits assembly
-for these compiled submissions; assembly is not a selectable language profile.
+Intel, and macOS 15 Apple Silicon. The C, C++, Rust, D, Zig, Odin, Go, and
+x86-64 assembly submission builds run inside digest-pinned Linux images, so the
+host compiler installation is not used to build a measured solution. `ccx asm`
+also emits assembly for the compiled submissions. Each profile's measurement
+coverage is published in [LANGUAGES.md](docs/LANGUAGES.md) and by `ccx languages`.
 
 Pinned CMake projects use CMake 3.31.6 and can select Ninja 1.12.1 or GNU Make
 4.4.1 from the same Debian snapshot. Versions and binary hashes are recorded

@@ -575,6 +575,7 @@ impl SolutionConfig {
             "zig" => Ok(Language::Zig),
             "odin" => Ok(Language::Odin),
             "go" => Ok(Language::Go),
+            "asm" | "x86-64" | "x86_64" => Ok(Language::AsmX86_64),
             other => Err(format!("{other:?} is not supported by this build")),
         }
     }
@@ -811,12 +812,26 @@ mod tests {
     }
 
     #[test]
-    fn assembly_is_not_a_selectable_solution_language() {
+    fn assembly_is_a_selectable_solution_language() {
         let assembly = SolutionConfig {
             language: "asm".into(),
+            toolchain: "gcc".into(),
             ..config("cpp", "gcc")
         };
-        assert!(assembly.language().is_err());
+        assert_eq!(assembly.language().unwrap(), Language::AsmX86_64);
+        assert_eq!(
+            assembly.toolchain(Language::AsmX86_64).unwrap(),
+            ToolchainName::Gcc
+        );
+        // Handwritten assembly has no compiler optimization pass, but it does
+        // build through the pinned C driver.
+        assert!(config("cpp", "rust").language().is_ok());
+        let bad = SolutionConfig {
+            language: "asm".into(),
+            toolchain: "rust".into(),
+            ..config("cpp", "gcc")
+        };
+        assert!(bad.toolchain(Language::AsmX86_64).is_err());
     }
 
     #[test]

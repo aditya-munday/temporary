@@ -79,10 +79,10 @@ pub fn run(
 ) -> anyhow::Result<()> {
     if !matches!(
         language,
-        "c" | "cpp" | "c++" | "rust" | "d" | "zig" | "odin" | "go"
+        "c" | "cpp" | "c++" | "rust" | "d" | "zig" | "odin" | "go" | "asm"
     ) {
         return Err(Fixable::new(format!("unsupported language {language:?}"))
-            .fix("currently supported build languages are `c`, `cpp`, `rust`, `d`, `zig`, `odin`, and `go`")
+            .fix("currently supported build languages are `c`, `cpp`, `rust`, `d`, `zig`, `odin`, `go`, and `asm`")
             .into_error());
     }
     if target_os != "linux" || target_arch != "x86_64" {
@@ -154,7 +154,7 @@ pub fn run(
         || (language != "go" && toolchain_name == "go")
     {
         return Err(Fixable::new(format!("unsupported toolchain {toolchain:?}"))
-            .fix("C and C++ use a pinned GCC or Clang profile; Rust uses `rust`; D uses `gdc`; Zig uses `zig`; Odin uses `odin`; Go uses `go`")
+            .fix("C, C++, and assembly use a pinned GCC or Clang profile; Rust uses `rust`; D uses `gdc`; Zig uses `zig`; Odin uses `odin`; Go uses `go`")
             .into_error());
     }
     if build_system == "cmake" && !matches!(language, "c" | "cpp" | "c++") {
@@ -173,6 +173,7 @@ pub fn run(
         "zig" => Language::Zig,
         "odin" => Language::Odin,
         "go" => Language::Go,
+        "asm" => Language::AsmX86_64,
         _ => unreachable!(),
     };
     let preset_value = match build_preset {
@@ -559,8 +560,14 @@ func main() {
         ),
         "asm" => (
             "s",
-            r#"/* x86-64 assembly. The ABI is the problem's declared one. */
-.globl main
+            r#"/* x86-64 assembly. The ABI is the problem's declared one.
+ *
+ * `.file` is required: without it the assembler emits a random temporary
+ * object name into `.strtab`, and two clean builds differ by a few bytes,
+ * which fails the reproducibility gate. */
+    .text
+    .file "main.s"
+    .globl main
 main:
     xor %eax, %eax
     ret

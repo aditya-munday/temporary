@@ -285,11 +285,13 @@ that wall time remains too noisy for ranking in this environment. The
 deterministic metrics repeat exactly here, not as a cross-machine claim.
 
 Ten current harness-0.18.0 capsules cover the supported languages and single- or
-multi-file layouts. Their observed instruction, simulated cache-miss, and
-candidate wall-clock spreads on this one host are:
+multi-file layouts, and one harness-0.19.0 capsule covers x86-64 assembly. Their
+observed instruction, simulated cache-miss, and candidate wall-clock spreads on
+this one host are:
 
 | Capsule | Language | Instructions | Cache misses | Wall time |
 | --- | --- | ---: | ---: | ---: |
+| [x86-64 assembly](arena/asm/capsule.phase1.json) | assembly | 0.00% | 0.00% | 16.47% |
 | [C multi-file](arena/c-multifile/capsule.phase1.v0.18.json) | C | 0.00% | 0.00% | 169.44% |
 | [D](arena/d/capsule.phase1.v0.18.json) | D | 0.00% | 0.00% | 289.48% |
 | [Go](arena/go/capsule.phase1.v0.18.json) | Go | 0.79% | 6.69% | 56.43% |
@@ -307,12 +309,14 @@ samples. Current replay requires the capsule's harness version. The refreshed
 host. The latest completed three-runner CI workflow also passed its hosted
 cross-machine comparison and replay for six gated profiles under harness
 0.19.0, including raw-sample validation and exact deterministic vector
-comparison. The three-host CI job measures seven
-profiles: C and C++ with GCC, Rust, D with GDC, Zig, Odin, and Go. Its strict
-cross-machine comparison currently gates C, C++, Rust, D, Zig, and Odin. Go
-measurements are retained as diagnostic artifacts because their instruction
-and simulated-cache spreads exceed the 0.01% repeatability threshold; they are
-not considered rankable or replayable proof of cross-machine equality.
+comparison. The three-host CI job is configured to measure eight
+profiles: C and C++ with GCC, x86-64 assembly with GCC, Rust, D with GDC, Zig,
+Odin, and Go. Its strict cross-machine comparison gates C, C++, assembly, Rust,
+D, Zig, and Odin; the assembly profile was added to the gate most recently and
+its first hosted three-runner result is pending. Go measurements are retained as
+diagnostic artifacts because their instruction and simulated-cache spreads
+exceed the 0.01% repeatability threshold; they are not considered rankable or
+replayable proof of cross-machine equality.
 The cross-machine CI comparison reports each host's observed spread for every
 deterministic metric and requires it to stay at or below 0.01% by default. CI
 uses this default threshold. It also

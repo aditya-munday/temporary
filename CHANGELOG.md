@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+- Add x86-64 assembly as a selectable submission language (`language = "asm"`
+  with the pinned GAS toolchain). Builds are static, use Linux syscalls
+  directly, and need no libc. Build, test, measure, replay, and `ccx asm` all
+  work, and `arena/asm` solves `sorted-pair-sum` with a counting sort and a
+  two-pointer scan. The scaffold writes a `.file` directive so the object is
+  byte-identical across clean builds. Assembly reports no allocation metric and
+  no compiler remarks, and both are marked unavailable rather than zero.
+- Publish the per-language capability matrix as `docs/LANGUAGES.md` and as a
+  `capabilities` table in `ccx profiles` (aliases `ccx languages` and
+  `ccx platforms`). The matrix covers instructions, cache and branch
+  simulation, allocations, peak memory, binary size, compiler remarks, the
+  assembly view, and a repeatability grade (`exact`, `bounded`, or `unranked`)
+  with a reason for every gap.
+
 - Advance capsules to schema 16. A profile may declare a bounded
   `applied_tolerance` for a simulated metric that carries a small, reproducible
   per-host offset. The cross-machine gate relaxes exact equality only for the

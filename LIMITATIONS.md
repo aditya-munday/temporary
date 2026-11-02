@@ -4,10 +4,11 @@ This repository is an engine scaffold, not a finished public arena. These are
 known gaps in the expanded Phase 1 target:
 
 - Build support includes C and C++ with GCC or Clang, Rust with rustc, D with
-  GDC, Zig with Zig, Odin with its pinned monthly release, and Go with its
-  pinned release. Assembly is generated compiler output through `ccx asm`, not
-  a selectable submission language. No additional language profiles are
-  included in this phase.
+  GDC, Zig with Zig, Odin with its pinned monthly release, Go with its pinned
+  release, and x86-64 assembly through GAS. Assembly is a selectable submission
+  language built statically from Linux syscalls; `ccx asm` still returns
+  compiler output for the compiled languages. No additional language profiles
+  are included in this phase.
 - The current execution image is Linux x86-64. macOS and Windows targets,
   32-bit x86, ARM, and MSVC need separate locked toolchain images and runners.
   `ccx.toml` records the target and refuses an unsupported image profile.
@@ -62,6 +63,11 @@ known gaps in the expanded Phase 1 target:
 - The GDC profile supports build, test, measurement, assembly, replay, and
   source-filtered GCC optimization remarks, but does not report allocation
   metrics.
+- The x86-64 assembly profile supports build, test, measurement, assembly,
+  replay, and byte-reproducible static binaries, but does not report allocation
+  metrics or compiler optimization remarks. Solutions use Linux syscalls
+  directly and may omit libc; the scaffold adds a `.file` directive so the
+  object is byte-identical across clean builds.
 - The Zig profile supports build, test, measurement, assembly, and replay, but
   does not report allocation metrics or compiler optimization remarks.
 - The Odin profile supports build, test, measurement, assembly, and replay, but

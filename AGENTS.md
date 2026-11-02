@@ -236,10 +236,18 @@ code.**
 ## Phase 1 status (Rust engine, `crates/`)
 
 Phase 1 proves one claim: a single command builds, tests, measures, and explains
-a solution, and produces a result anyone can replay to the same numbers. Seven
-build languages are first-class: C, C++, Rust, D, Zig, Odin, and Go. Execution
-is pinned to Linux x86-64; other OS/arch profiles report "unavailable". No
-website, accounts, or contests yet.
+a solution, and produces a result anyone can replay to the same numbers. Eight
+build languages are first-class: C, C++, x86-64 assembly, Rust, D, Zig, Odin,
+and Go. Execution is pinned to Linux x86-64; other OS/arch profiles report
+"unavailable". No website, accounts, or contests yet.
+
+Assembly is a selectable submission language (`language = "asm"`,
+`toolchain = "gcc"`), built statically from Linux syscalls with no libc
+required. `arena/asm` solves `sorted-pair-sum`. It reports no allocation metric
+and no compiler remarks; both are marked unavailable rather than zero. The
+scaffold emits a `.file` directive so the object is byte-identical across clean
+builds. Per-language coverage is published in `docs/LANGUAGES.md` and by
+`ccx profiles` (aliases `ccx languages`, `ccx platforms`).
 
 Capsules are at **schema 16** (schema 15 added raw repeatability observations;
 schema 16 adds the optional `applied_tolerance` field). See `CAPSULE_SPEC.md`.

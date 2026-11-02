@@ -9,9 +9,30 @@ pub struct ProfileCatalog {
     pub schema_version: u32,
     pub execution_targets: Vec<ExecutionTarget>,
     pub languages: Vec<LanguageProfile>,
+    pub capabilities: Vec<LanguageCapabilities>,
     pub build_systems: Vec<BuildSystemProfile>,
     pub customisation: CustomisationProfile,
     pub metrics: Vec<MetricProfile>,
+}
+
+/// Per-language capability matrix (Group B2). Every column answers "can this
+/// profile produce the metric, honestly", and a missing capability is reported
+/// as unavailable with a reason, never as a zero.
+#[derive(Debug, Clone, Serialize)]
+pub struct LanguageCapabilities {
+    pub language: String,
+    pub toolchain: String,
+    pub instructions: bool,
+    pub cache_simulation: bool,
+    pub branch_simulation: bool,
+    pub allocations: bool,
+    pub peak_memory: bool,
+    pub binary_size: bool,
+    pub compiler_remarks: bool,
+    pub asm_view: bool,
+    /// `exact`, `bounded`, or `unranked`.
+    pub repeatability_grade: String,
+    pub repeatability_notes: String,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -118,6 +139,139 @@ fn language_profile(language: &str, toolchains: Vec<ToolchainProfile>) -> Langua
     }
 }
 
+/// The per-language capability matrix (Group B2), derived from the same profile
+/// facts the rest of the catalog reports so the two cannot drift apart.
+fn capability_matrix(has_c_cpp: bool) -> Vec<LanguageCapabilities> {
+    let gcc_family =
+        |language: &str, allocations: bool, remarks: bool, grade: &str, notes: &str| {
+            LanguageCapabilities {
+                language: language.into(),
+                toolchain: "gcc".into(),
+                instructions: true,
+                cache_simulation: true,
+                branch_simulation: true,
+                allocations,
+                peak_memory: true,
+                binary_size: true,
+                compiler_remarks: remarks,
+                asm_view: true,
+                repeatability_grade: grade.into(),
+                repeatability_notes: notes.into(),
+            }
+        };
+    let mut rows = vec![
+        gcc_family(
+            "c",
+            true,
+            true,
+            "exact",
+            "Cachegrind counters are identical across clean builds",
+        ),
+        gcc_family(
+            "cpp",
+            true,
+            true,
+            "exact",
+            "Cachegrind counters are identical across clean builds",
+        ),
+        gcc_family(
+            "asm",
+            false,
+            false,
+            "exact",
+            "handwritten assembly builds to a byte-identical binary; simulated counters are stable",
+        ),
+    ];
+    rows.push(LanguageCapabilities {
+        language: "rust".into(),
+        toolchain: "rust".into(),
+        instructions: true,
+        cache_simulation: true,
+        branch_simulation: true,
+        allocations: true,
+        peak_memory: true,
+        binary_size: true,
+        compiler_remarks: false,
+        asm_view: true,
+        repeatability_grade: "bounded".into(),
+        repeatability_notes:
+            "libc ifunc dispatch adds a host-dependent offset; covered by the recorded \
+             rust-libc-ifunc-dispatch tolerance"
+                .into(),
+    });
+    for language in ["odin", "zig"] {
+        rows.push(LanguageCapabilities {
+            language: language.into(),
+            toolchain: language.into(),
+            instructions: true,
+            cache_simulation: true,
+            branch_simulation: true,
+            allocations: false,
+            peak_memory: true,
+            binary_size: true,
+            compiler_remarks: false,
+            asm_view: true,
+            repeatability_grade: "exact".into(),
+            repeatability_notes: "simulated counters are identical across clean builds".into(),
+        });
+    }
+    rows.push(LanguageCapabilities {
+        language: "go".into(),
+        toolchain: "go".into(),
+        instructions: true,
+        cache_simulation: true,
+        branch_simulation: true,
+        allocations: false,
+        peak_memory: true,
+        binary_size: true,
+        compiler_remarks: true,
+        asm_view: true,
+        repeatability_grade: "unranked".into(),
+        repeatability_notes:
+            "the runtime scheduler and GC make simulated counters vary between fresh processes; \
+             the spread exceeds the 0.01% ranking tolerance, so Go results are reported but not ranked"
+                .into(),
+    });
+    rows.push(LanguageCapabilities {
+        language: "d".into(),
+        toolchain: "gdc".into(),
+        instructions: true,
+        cache_simulation: true,
+        branch_simulation: true,
+        allocations: false,
+        peak_memory: true,
+        binary_size: true,
+        compiler_remarks: true,
+        asm_view: true,
+        repeatability_grade: "bounded".into(),
+        repeatability_notes: "druntime reads core.cpuid at startup; covered by the recorded \
+             d-gdc-druntime-cpuid tolerance"
+            .into(),
+    });
+    if !has_c_cpp {
+        for row in &mut rows {
+            if matches!(row.language.as_str(), "c" | "cpp" | "asm") {
+                *row = LanguageCapabilities {
+                    language: row.language.clone(),
+                    toolchain: "gcc".into(),
+                    instructions: false,
+                    cache_simulation: false,
+                    branch_simulation: false,
+                    allocations: false,
+                    peak_memory: false,
+                    binary_size: false,
+                    compiler_remarks: false,
+                    asm_view: false,
+                    repeatability_grade: "unavailable".into(),
+                    repeatability_notes:
+                        "no pinned GCC or Clang toolchain image is present in the lock".into(),
+                };
+            }
+        }
+    }
+    rows
+}
+
 pub fn catalog() -> ProfileCatalog {
     let build_tool_version = |name: &str| {
         toolchain::pinned_build_tool(name)
@@ -144,6 +298,9 @@ pub fn catalog() -> ProfileCatalog {
         cpp_languages.extend(["c".into(), "cpp".into()]);
     }
     let mut direct_languages = cpp_languages.clone();
+    if has_c_cpp {
+        direct_languages.push("asm".into());
+    }
     for (language, name) in [
         ("rust", ToolchainName::Rust),
         ("odin", ToolchainName::Odin),
@@ -242,7 +399,8 @@ pub fn catalog() -> ProfileCatalog {
 
     let languages = vec![
         language_profile("c", c_cpp_toolchain_profiles.clone()),
-        language_profile("cpp", c_cpp_toolchain_profiles),
+        language_profile("cpp", c_cpp_toolchain_profiles.clone()),
+        language_profile("asm", c_cpp_toolchain_profiles),
         language_profile("rust", vec![toolchain_profile(ToolchainName::Rust)]),
         language_profile("odin", vec![toolchain_profile(ToolchainName::Odin)]),
         language_profile("go", vec![toolchain_profile(ToolchainName::Go)]),
@@ -254,6 +412,7 @@ pub fn catalog() -> ProfileCatalog {
         schema_version: 12,
         execution_targets: compiler_targets,
         languages,
+        capabilities: capability_matrix(has_c_cpp),
         build_systems: vec![
             BuildSystemProfile {
                 id: "direct".into(),
@@ -385,7 +544,7 @@ fn metric(id: &str, status: &str, method: &str) -> MetricProfile {
     let supported_languages = match id {
         "allocations" | "allocated_bytes" => vec!["c", "cpp", "rust"],
         "live_cpu_frequency" | "network_latency" | "file_io_latency" => Vec::new(),
-        _ => vec!["c", "cpp", "rust", "odin", "go", "zig", "d"],
+        _ => vec!["c", "cpp", "asm", "rust", "odin", "go", "zig", "d"],
     };
     MetricProfile {
         id: id.into(),
@@ -444,6 +603,41 @@ pub fn run(format: Format) -> anyhow::Result<()> {
                     .join(", ");
                 println!("  {:<12} {profiles}", language.language);
             }
+            println!("\nCapability matrix (per language; missing = unavailable, never zero)");
+            println!(
+                "  {:<6} {:<12} {:<5} {:<7} {:<8} {:<12} {:<12} {:<12} {:<9} {:<8} repeatability",
+                "lang",
+                "toolchain",
+                "instr",
+                "cache",
+                "branch",
+                "alloc",
+                "peak_mem",
+                "bin_size",
+                "remarks",
+                "asm"
+            );
+            for row in &report.capabilities {
+                let mark = |value: bool| if value { "yes" } else { "no" };
+                println!(
+                    "  {:<6} {:<12} {:<5} {:<7} {:<8} {:<12} {:<12} {:<12} {:<9} {:<8} {}",
+                    row.language,
+                    row.toolchain,
+                    mark(row.instructions),
+                    mark(row.cache_simulation),
+                    mark(row.branch_simulation),
+                    mark(row.allocations),
+                    mark(row.peak_memory),
+                    mark(row.binary_size),
+                    mark(row.compiler_remarks),
+                    mark(row.asm_view),
+                    row.repeatability_grade
+                );
+            }
+            println!("\nRepeatability notes");
+            for row in &report.capabilities {
+                println!("  {:<6} {}", row.language, row.repeatability_notes);
+            }
             println!("\nBuild systems");
             for build in &report.build_systems {
                 println!(
@@ -486,11 +680,12 @@ mod tests {
     fn catalog_exposes_current_and_unavailable_profiles() {
         let report = catalog();
         assert_eq!(report.schema_version, 12);
-        assert_eq!(report.languages.len(), 7);
-        assert!(!report
+        assert_eq!(report.languages.len(), 8);
+        assert!(report
             .languages
             .iter()
-            .any(|language| language.language == "asm-x86_64"));
+            .any(|language| language.language == "asm" && language.available));
+        assert_eq!(report.capabilities.len(), report.languages.len());
         assert!(report
             .execution_targets
             .iter()
@@ -563,7 +758,8 @@ mod tests {
         }
         assert!(report.metrics.iter().all(|metric| {
             metric.id != "instructions"
-                || metric.supported_languages == vec!["c", "cpp", "rust", "odin", "go", "zig", "d"]
+                || metric.supported_languages
+                    == vec!["c", "cpp", "asm", "rust", "odin", "go", "zig", "d"]
         }));
         assert!(report.metrics.iter().any(|metric| {
             metric.id == "data_reads"
@@ -601,5 +797,41 @@ mod tests {
             .find(|metric| metric.id == "cache_misses")
             .expect("cache-miss metric is present");
         assert_eq!(metric.method, "Cachegrind, fixed I1/D1 CCX v1 model");
+    }
+
+    #[test]
+    fn capability_matrix_reports_gaps_as_unavailable_not_zero() {
+        let report = catalog();
+        let row = |language: &str| {
+            report
+                .capabilities
+                .iter()
+                .find(|row| row.language == language)
+                .unwrap_or_else(|| panic!("capability row for {language}"))
+        };
+
+        let asm = row("asm");
+        assert!(asm.instructions && asm.cache_simulation && asm.branch_simulation);
+        assert!(asm.asm_view && asm.binary_size && asm.peak_memory);
+        assert!(!asm.allocations, "assembly has no allocation counter");
+        assert!(
+            !asm.compiler_remarks,
+            "handwritten assembly has no optimizer remarks"
+        );
+
+        let go = row("go");
+        assert_eq!(go.repeatability_grade, "unranked");
+        assert!(go.repeatability_notes.contains("not ranked"));
+
+        assert_eq!(row("d").repeatability_grade, "bounded");
+        assert_eq!(row("rust").repeatability_grade, "bounded");
+        assert_eq!(row("c").repeatability_grade, "exact");
+
+        for language in ["odin", "zig", "go", "d", "asm"] {
+            assert!(
+                !row(language).allocations,
+                "{language} must not claim allocation accounting"
+            );
+        }
     }
 }

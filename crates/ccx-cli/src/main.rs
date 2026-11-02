@@ -43,6 +43,8 @@ pub struct Cli {
 pub enum Command {
     /// Check that Docker, the pinned toolchain images, and counters are available.
     Doctor,
+    /// List available languages, toolchains, build systems, and metrics.
+    #[command(visible_alias = "languages", visible_alias = "platforms")]
     Profiles,
     /// Create a new solution scaffold in the current directory.
     Init {

@@ -56,7 +56,7 @@ Design rules:
 
 | field | type | notes |
 |---|---|---|
-| `language` | enum | `c`, `cpp`, `rust`, `d`, `zig`, `odin`, `go` (current selectable build set) |
+| `language` | enum | `c`, `cpp`, `asm-x86-64`, `rust`, `d`, `zig`, `odin`, `go` (current selectable build set; `asm-x86-64` is written as `asm` in `ccx.toml`) |
 | `entry` | string | relative path of the translation unit to compile |
 | `files` | map<string,string> | relative path → `sha256:<hex>`; `problem/` paths are relative to the problem folder, others to the solution folder |
 | `source_sha256` | string | hex, over the sorted `files` map (§10) |

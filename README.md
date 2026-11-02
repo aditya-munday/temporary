@@ -7,10 +7,11 @@ the same pinned environment fingerprint is available.
 
 The current engine supports C and C++ with pinned GCC and Clang images, Rust
 with a pinned `rustc` image, D with pinned GDC, Zig with a pinned Zig compiler,
-Odin with a pinned monthly release, and Go with a pinned release. It runs seeded
-problems in an isolated Docker container and emits JSON experiment capsules.
-Assembly is available as generated compiler output through `ccx asm`, not as a
-selectable submission language.
+Odin with a pinned monthly release, Go with a pinned release, and x86-64
+assembly through GAS. It runs seeded problems in an isolated Docker container
+and emits JSON experiment capsules. `ccx asm` returns compiler output for the
+compiled languages. Each language's measurement coverage is published in the
+[language capability matrix](docs/LANGUAGES.md), also available as `ccx languages`.
 
 ## Quick start
 
@@ -212,7 +213,8 @@ replayable example with source-mapped assembly, counters, and capsule diffs.
 
 ## Trust and limitations
 
-Read [METHODOLOGY.md](METHODOLOGY.md), [CAPSULE_SPEC.md](CAPSULE_SPEC.md), and
-[LIMITATIONS.md](LIMITATIONS.md) before comparing or citing results. Simulated
+Read [METHODOLOGY.md](METHODOLOGY.md), [CAPSULE_SPEC.md](CAPSULE_SPEC.md),
+[LANGUAGES.md](docs/LANGUAGES.md), and [LIMITATIONS.md](LIMITATIONS.md) before
+comparing or citing results. Simulated
 counter values are comparable only when the measured binary, input, toolchain,
 and simulator configuration match. Wall-clock time is host-specific.
