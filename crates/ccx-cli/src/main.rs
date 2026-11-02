@@ -151,6 +151,29 @@ pub enum Command {
         #[arg(long, default_value_t = 1)]
         seed: u64,
     },
+    /// Measure the same solution N times and report the achieved reproducibility.
+    ///
+    /// Unlike `measure --repeat`, this runs `measure` N separate times, each
+    /// with its own capsule, and reports the spread across those capsules.
+    Repeat {
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+        /// How many separate `measure` runs to perform.
+        #[arg(long, default_value_t = 20)]
+        repeat: u32,
+        /// Samples inside each `measure` run.
+        #[arg(long, default_value_t = 20)]
+        samples: u32,
+        /// Directory for the per-repeat capsules (default: `<dir>/repeat`).
+        #[arg(long)]
+        out: Option<PathBuf>,
+        /// Named problem size to measure.
+        #[arg(long, default_value = "naive")]
+        size: String,
+        /// Seed for the generated input.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+    },
     Experiment {
         #[arg(long, default_value = ".")]
         dir: PathBuf,
@@ -333,6 +356,22 @@ fn run(cli: &Cli) -> anyhow::Result<()> {
             size,
             seed,
         } => cmd::measure::run(cli.format, dir, *repeat, out.as_deref(), size, *seed),
+        Command::Repeat {
+            dir,
+            repeat,
+            samples,
+            out,
+            size,
+            seed,
+        } => cmd::repeat::run(
+            cli.format,
+            dir,
+            *repeat,
+            *samples,
+            out.as_deref(),
+            size,
+            *seed,
+        ),
         Command::Experiment {
             dir,
             repeat,

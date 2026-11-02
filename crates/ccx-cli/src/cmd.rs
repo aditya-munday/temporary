@@ -11,6 +11,7 @@ pub mod matrix;
 pub mod measure;
 pub mod pareto;
 pub mod profiles;
+pub mod repeat;
 pub mod replay;
 pub mod run;
 pub mod test;

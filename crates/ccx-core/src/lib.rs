@@ -11,6 +11,7 @@ pub mod host;
 pub mod measure;
 pub mod problem;
 pub mod ranking;
+pub mod repeat;
 pub mod sandbox;
 pub mod toolchain;
 

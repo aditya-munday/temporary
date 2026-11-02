@@ -57,6 +57,7 @@ jobs:
       - run: target/release/ccx test --dir arena/multi-file --hidden --format json
       - run: target/release/ccx asm --dir arena/multi-file --format json
       - run: target/release/ccx measure --dir arena/multi-file --size good --seed 42 --repeat 2 --format json
+      - run: target/release/ccx repeat --dir arena/multi-file --size good --seed 42 --repeat 2 --samples 3 --format json | python3 -c "import json,sys; r=json.load(sys.stdin); assert r['all_deterministic_within_tolerance'] and r['achieved_tolerance_pct'] <= r['tolerance_pct']"
       - run: target/release/ccx replay arena/multi-file/capsule.json --format json
       - run: target/release/ccx replay evidence/sorted-pair-sum-great.json --dir arena/great --format json | python3 -c "import json,sys; r=json.load(sys.stdin); assert r['reproduced'] and r['deterministic_match']"
       - run: target/release/ccx test --dir arena/asm --hidden --format json

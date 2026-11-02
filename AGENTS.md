@@ -275,6 +275,9 @@ image needs a C compiler (all three have one).
 - `ccx build` — compile a solution in the pinned toolchain image.
 - `ccx test` — run the arena solution against every size in `problem.json`.
 - `ccx measure --size S --seed N --repeat R` — produce a capsule.
+- `ccx repeat --samples N --repeat R` — run `measure` N times and report the
+  achieved reproducibility across the resulting capsules, against the ranking
+  tolerance. Exits non-zero when a deterministic metric drifts beyond it.
 - `ccx replay <capsule.json>` — rebuild, re-measure, and compare to the capsule.
 - `ccx init`, `ccx asm`, `ccx diff`, `ccx matrix`, `ccx pareto`,
   `ccx experiment`, `ccx validate`, `ccx doctor` — see `ccx --help`.
@@ -382,7 +385,7 @@ Hard-won facts, each of which was a real bug:
 
 - `cargo fmt --all -- --check`: clean.
 - `cargo clippy --workspace --all-targets -- -D warnings`: clean.
-- `cargo test --workspace --release`: 208 tests pass (145 core + 63 CLI), 1 ignored.
+- `cargo test --workspace --release`: 211 tests pass (148 core + 63 CLI), 1 ignored.
 - `python3 -m unittest scripts/test_compare_capsules.py`: 22 tests pass.
 - `ccx measure` on the naive solution: all metrics present and correctly
   labelled.

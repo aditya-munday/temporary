@@ -2,13 +2,23 @@
 
 ## Unreleased
 
+- Add `ccx repeat`, the reproducibility report. It runs `measure` N separate
+  times, each producing its own capsule, and reports the spread across those
+  capsules for every deterministic metric against the ranking tolerance
+  (`0.01%`). It prints the tolerance claimed and the tolerance achieved, lists
+  each metric's min/max/median/spread with an `exact` marker, counts the
+  machine-dependent metrics it deliberately does not gate, and exits non-zero
+  when any deterministic metric drifts beyond the tolerance. `measure --repeat`
+  shows the spread inside one session; `repeat` shows whether the solution
+  reproduces at all. Wired into `container-engine` CI.
+
 - Document the sandbox threat model in `SECURITY.md`: the trusted/untrusted
   split, every `docker run` control and its purpose, result-integrity rules, the
   eight-case hostile suite, and the explicit non-goals (Docker/kernel escapes,
   compromised toolchain images, cross-run denial of service, side channels).
   Link it from the README trust section. Update `AGENTS.md` to the merged state
   (main at `79ae23f`, all three Phase 1 PRs landed) and refresh the verified
-  test counts to 208 (145 core + 63 CLI).
+  test counts to 211 (148 core + 63 CLI).
 
 - Add a host-noise canary. `ccx measure` now runs a fixed, self-contained C
   workload (`ccx-canary-v1`) immediately before and after the solution's own

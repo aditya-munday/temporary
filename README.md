@@ -191,11 +191,18 @@ profiles are limited to the safe C/C++ argv template.
 
 ## Commands
 
-`ccx doctor`, `init`, `build`, `run`, `test`, `measure`, `matrix`, `pareto`,
-`asm`, `diff`, `replay`, and `validate` are available. Add `--format json` for
-machine-readable reports. `ccx build` stores the binary under `.ccx/out` using
-its SHA-256 in the filename; intermediate files use a per-invocation scratch
-directory. Run `ccx --help` and `ccx <command> --help` for arguments.
+`ccx doctor`, `init`, `build`, `run`, `test`, `measure`, `repeat`, `experiment`,
+`matrix`, `pareto`, `asm`, `diff`, `replay`, and `validate` are available. Add
+`--format json` for machine-readable reports. `ccx build` stores the binary
+under `.ccx/out` using its SHA-256 in the filename; intermediate files use a
+per-invocation scratch directory. Run `ccx --help` and `ccx <command> --help`
+for arguments.
+
+`ccx repeat` runs `measure` N separate times, each with its own capsule, and
+reports the spread across them against the ranking tolerance. Where
+`measure --repeat` shows the spread inside one session, `repeat` shows whether
+the solution reproduces at all: it exits non-zero when a deterministic metric
+drifts beyond the documented tolerance.
 
 `ccx matrix` groups the profiles it compares into statistical tie groups: two
 profiles whose measurement intervals overlap share a rank, because a difference
