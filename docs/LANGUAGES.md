@@ -29,11 +29,21 @@ table below. The table and the CLI share one source of truth in
 | Zig | 0.17.0 | yes | yes | yes | no | yes | yes | no | yes | exact |
 | Go | go1.26.10 | yes | yes | yes | no | yes | yes | yes | yes | unranked |
 | D | GDC 14.2.0 | yes | yes | yes | no | yes | yes | yes | yes | bounded |
+| Nim | planned | no | no | no | no | no | no | no | no | unavailable |
+| Ada | planned | no | no | no | no | no | no | no | no | unavailable |
+| Fortran | planned | no | no | no | no | no | no | no | no | unavailable |
+| ARM64 assembly | planned | no | no | no | no | no | no | no | no | unavailable |
 
 C and C++ also select GCC 13.3.0, Clang 18.1.8, and Clang 19.1.7. The matrix
 reports the default GCC 14.2.0 profile; the other compiler selections share the
 same capability set and differ only in the remarks pass (Clang uses `-Rpass`,
 GCC uses `-fopt-info`).
+
+The `planned` rows are language slots named so a client can explain and disable
+them. Every capability is `no`, `ccx init` rejects them with the reason, and the
+status column reads `planned`. They are not claimed as supported: each needs a
+pinned image, a runner entry, and a problem fixture before it can move to
+`available`.
 
 ## Column definitions
 
@@ -75,7 +85,7 @@ GCC uses `-fopt-info`).
     tolerance. Go builds fix `GOROOT`, module and toolchain downloads, cache
     paths, and record `GOMAXPROCS=1` with the runtime seed setting, but that is
     not enough to reach the ranking tolerance. See
-    [METHODOLOGY.md](../METHODOLOGY.md) and [LIMITATIONS.md](../LIMITATIONS.md).
+    [METHODOLOGY.md](METHODOLOGY.md), [LIMITATIONS.md](LIMITATIONS.md), and [PLATFORM_SUPPORT.md](PLATFORM_SUPPORT.md).
 
 ## Unavailable capabilities and why
 
@@ -96,5 +106,7 @@ An extended language slot (Nim, Ada, Fortran, ARM64 assembly, and so on) follows
 the same profile mechanism: add a pinned toolchain image and fingerprint, a
 `Language` variant, a build/assembly/remarks arm in the pipeline, and a
 capability row. If a capability cannot be produced, add the row with that
-capability marked unavailable and a reason. See
+capability marked unavailable and a reason. The four slots above already have a
+`planned` row; promoting one to `available` means adding the pinned image, the
+runner support, and a problem fixture, then flipping the row's `status`. See
 [CONTRIBUTING.md](../CONTRIBUTING.md).

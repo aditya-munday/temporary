@@ -18,6 +18,23 @@ has only been end-to-end verified on x86-64 Linux so far. Hosted native CLI
 checks pass on Windows and macOS, but their Docker Desktop integration remains
 unverified.
 
+The pinned execution images are x86-64. On a host of another architecture
+(for example Apple Silicon / arm64) the engine does not silently fall back to
+Docker's amd64 emulation, which is slow and not deterministic. Instead,
+`ccx doctor` reports a `host platform` check as `MISS` with the reason and the
+fix, and the host is not treated as ready for measurement. Use an x86-64 host,
+or open the devcontainer below, which pins an x86-64 base image.
+
+## Devcontainer and Codespaces
+
+`.devcontainer/devcontainer.json` provisions an Ubuntu 24.04 environment with
+Docker-in-Docker, Rust 1.85.1, and Python 3.12, then runs
+`scripts/devcontainer-setup.sh`. That script installs the Rust components, waits
+for the Docker daemon, builds the pinned toolchain images, and builds the
+engine, so `ccx doctor` is ready when the container finishes starting. The
+configuration requests 4 CPUs, 8 GB memory, and 32 GB storage, which is the
+minimum for the container builds and measurements to complete.
+
 From the Linux development host, `cargo check --workspace --all-targets` with
 `RUSTFLAGS=-D warnings` passed for `x86_64-pc-windows-gnu`,
 `x86_64-apple-darwin`, and `aarch64-apple-darwin` using the installed Rust
@@ -48,7 +65,7 @@ Intel, and macOS 15 Apple Silicon. The C, C++, Rust, D, Zig, Odin, Go, and
 x86-64 assembly submission builds run inside digest-pinned Linux images, so the
 host compiler installation is not used to build a measured solution. `ccx asm`
 also emits assembly for the compiled submissions. Each profile's measurement
-coverage is published in [LANGUAGES.md](docs/LANGUAGES.md) and by `ccx languages`.
+coverage is published in [LANGUAGES.md](LANGUAGES.md) and by `ccx languages`.
 
 Pinned CMake projects use CMake 3.31.6 and can select Ninja 1.12.1 or GNU Make
 4.4.1 from the same Debian snapshot. Versions and binary hashes are recorded

@@ -198,6 +198,143 @@ else
   report tamper_with_results "read-only source mount" "hostile source failed to compile" 0
 fi
 
+# --- symlink escape: a scratch symlink must not reach the host ------------
+echo
+echo "==> symlink and kernel-interface containment"
+dir="$work/SymlinkEscape"
+mkdir -p "$dir"
+printf '%s' "$(extract_case SymlinkEscape)" > "$dir/main.c"
+host_secret="$work/symlink-secret"
+host_secret_token="CCX_SYMLINK_SECRET_${RANDOM}_$(date +%s%N)"
+printf '%s' "$host_secret_token" > "$host_secret"
+chmod 644 "$host_secret"
+if gcc -O2 -o "$dir/prog" "$dir/main.c" 2>/dev/null; then
+  docker run "${sandbox_flags[@]}" --env "CCX_HOST_SECRET_PATH=$host_secret" -v "$dir:/in:ro" "$GCC_IMAGE" \
+    /opt/ccx/runner --timeout-ms 2000 --memory-bytes 268435456 \
+    --stack-bytes 8388608 --pids-limit 16 --max-output-bytes 65536 \
+    -- /in/prog >"$dir/report.txt" 2>&1
+  run_rc=$?
+  if [[ $run_rc == 0 ]] && ! grep -Fq "$host_secret_token" "$dir/report.txt"; then
+    report symlink_escape "host path unreachable" "symlink resolved to nothing" 1
+  else
+    report symlink_escape "host path unreachable" "host sentinel leaked or runner failed" 0
+  fi
+else
+  report symlink_escape "host path unreachable" "hostile source failed to compile" 0
+fi
+
+# --- /proc and /sys probing: no host state may leak ----------------------
+dir="$work/ProcAndSysProbe"
+mkdir -p "$dir"
+printf '%s' "$(extract_case ProcAndSysProbe)" > "$dir/main.c"
+host_secret="$work/proc-secret"
+host_secret_token="CCX_PROC_SECRET_${RANDOM}_$(date +%s%N)"
+printf '%s' "$host_secret_token" > "$host_secret"
+chmod 644 "$host_secret"
+if gcc -O2 -o "$dir/prog" "$dir/main.c" 2>/dev/null; then
+  docker run "${sandbox_flags[@]}" --env "CCX_HOST_SECRET_PATH=$host_secret" -v "$dir:/in:ro" "$GCC_IMAGE" \
+    /opt/ccx/runner --timeout-ms 2000 --memory-bytes 268435456 \
+    --stack-bytes 8388608 --pids-limit 16 --max-output-bytes 65536 \
+    -- /in/prog >"$dir/report.txt" 2>&1
+  run_rc=$?
+  leaked=$(grep -o 'CCX_PROBE_LEAKED [0-9]*' "$dir/report.txt" | awk '{print $2}')
+  if [[ $run_rc == 0 && "${leaked:-1}" == "0" ]] && ! grep -Fq "$host_secret_token" "$dir/report.txt"; then
+    report proc_and_sys_probe "no host state readable" "0 host bytes read via /proc" 1
+  else
+    report proc_and_sys_probe "no host state readable" "leaked=${leaked:-unknown} rc=$run_rc" 0
+  fi
+else
+  report proc_and_sys_probe "no host state readable" "hostile source failed to compile" 0
+fi
+
+# --- ptrace: attaching to another process must fail ----------------------
+dir="$work/PtraceAttempt"
+mkdir -p "$dir"
+printf '%s' "$(extract_case PtraceAttempt)" > "$dir/main.c"
+if gcc -O2 -o "$dir/prog" "$dir/main.c" 2>/dev/null; then
+  docker run "${sandbox_flags[@]}" -v "$dir:/in:ro" "$GCC_IMAGE" \
+    /opt/ccx/runner --timeout-ms 2000 --memory-bytes 268435456 \
+    --stack-bytes 8388608 --pids-limit 16 --max-output-bytes 65536 \
+    -- /in/prog >"$dir/report.txt" 2>&1
+  run_rc=$?
+  if [[ $run_rc == 0 ]] && ! grep -Fq 'CCX_PTRACE_OK' "$dir/report.txt"; then
+    report ptrace_attempt "attach denied" "ptrace refused" 1
+  else
+    report ptrace_attempt "attach denied" "ptrace succeeded or runner failed" 0
+  fi
+else
+  report ptrace_attempt "attach denied" "hostile source failed to compile" 0
+fi
+
+# --- fd exhaustion: must not break the report or leak host fds -----------
+dir="$work/FdExhaustion"
+mkdir -p "$dir"
+printf '%s' "$(extract_case FdExhaustion)" > "$dir/main.c"
+if gcc -O2 -o "$dir/prog" "$dir/main.c" 2>/dev/null; then
+  docker run "${sandbox_flags[@]}" -v "$dir:/in:ro" "$GCC_IMAGE" \
+    /opt/ccx/runner --timeout-ms 4000 --memory-bytes 268435456 \
+    --stack-bytes 8388608 --pids-limit 16 --max-output-bytes 65536 \
+    -- /in/prog >"$dir/report.txt" 2>&1
+  run_rc=$?
+  opened=$(grep -o 'CCX_FDS_OPENED [0-9]*' "$dir/report.txt" | awk '{print $2}')
+  if [[ $run_rc == 0 && -n "${opened:-}" ]]; then
+    report fd_exhaustion "report survives" "opened ${opened} fds, report intact" 1
+  else
+    report fd_exhaustion "report survives" "runner failed or no report: rc=$run_rc" 0
+  fi
+else
+  report fd_exhaustion "report survives" "hostile source failed to compile" 0
+fi
+
+# --- clock tampering: the wall clock must not be movable -----------------
+dir="$work/ClockTamper"
+mkdir -p "$dir"
+printf '%s' "$(extract_case ClockTamper)" > "$dir/main.c"
+if gcc -O2 -o "$dir/prog" "$dir/main.c" 2>/dev/null; then
+  docker run "${sandbox_flags[@]}" -v "$dir:/in:ro" "$GCC_IMAGE" \
+    /opt/ccx/runner --timeout-ms 2000 --memory-bytes 268435456 \
+    --stack-bytes 8388608 --pids-limit 16 --max-output-bytes 65536 \
+    -- /in/prog >"$dir/report.txt" 2>&1
+  run_rc=$?
+  if [[ $run_rc == 0 ]] && grep -q 'CCX_CLOCK_MOVED 0 0' "$dir/report.txt"; then
+    report clock_tamper "clock immutable" "both clock_settime and settimeofday refused" 1
+  else
+    report clock_tamper "clock immutable" "the clock was moved or runner failed" 0
+  fi
+else
+  report clock_tamper "clock immutable" "hostile source failed to compile" 0
+fi
+
+# --- nested spawn: the pids limit must stop the tree ---------------------
+dir="$work/NestedSpawn"
+mkdir -p "$dir"
+printf '%s' "$(extract_case NestedSpawn)" > "$dir/main.c"
+if gcc -O2 -o "$dir/prog" "$dir/main.c" 2>/dev/null; then
+  start=$(date +%s%N)
+  docker run "${sandbox_flags[@]}" -v "$dir:/in:ro" "$GCC_IMAGE" \
+    /opt/ccx/runner --timeout-ms 4000 --memory-bytes 268435456 \
+    --stack-bytes 8388608 --pids-limit 16 --max-output-bytes 65536 \
+    -- /in/prog >"$dir/report.txt" 2>&1
+  run_rc=$?
+  elapsed_ms=$(( ($(date +%s%N) - start) / 1000000 ))
+  spawned=$(grep -o 'CCX_SPAWNED [0-9]*' "$dir/report.txt" | awk '{print $2}')
+  # The pids limit (16) must cap the tree. Descendants that outlive the leader
+  # hold the output pipe, so the run is stopped at the deadline (rc 124) or
+  # reported as misuse (rc 2); a clean exit (rc 0) is fine too. What matters is
+  # that the tree stayed bounded and the run ended.
+  if [[ ( $run_rc == 0 || $run_rc == 2 || $run_rc == 124 ) && -n "${spawned:-}" && ${spawned:-999} -lt 64 && $elapsed_ms -lt 5000 ]]; then
+    report nested_spawn "tree bounded by pids limit" "spawned ${spawned}, contained in ${elapsed_ms}ms" 1
+  else
+    report nested_spawn "tree bounded by pids limit" "spawned=${spawned:-unknown}, rc=$run_rc, ${elapsed_ms}ms" 0
+  fi
+else
+  report nested_spawn "tree bounded by pids limit" "hostile source failed to compile" 0
+fi
+
+# --- huge stderr: stderr must be capped like stdout ---------------------
+rc=$(build_and_run HugeStderr 2000)
+report huge_stderr "rc=125" "rc=$rc, stderr cap hit" "$([[ $rc == 125 ]] && echo 1 || echo 0)"
+
 echo
 echo "==> $pass passed, $fail failed"
 [[ $fail == 0 ]]

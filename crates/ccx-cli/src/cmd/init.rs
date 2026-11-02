@@ -81,8 +81,19 @@ pub fn run(
         language,
         "c" | "cpp" | "c++" | "rust" | "d" | "zig" | "odin" | "go" | "asm"
     ) {
+        let planned = ["nim", "ada", "fortran", "asm-aarch64"];
+        let hint = if planned.contains(&language) {
+            format!(
+                "{language} is a planned language slot and is not yet supported: it needs a \
+                 pinned image, a runner entry, and a problem fixture"
+            )
+        } else {
+            "currently supported build languages are `c`, `cpp`, `rust`, `d`, `zig`, `odin`, \
+             `go`, and `asm`"
+                .to_string()
+        };
         return Err(Fixable::new(format!("unsupported language {language:?}"))
-            .fix("currently supported build languages are `c`, `cpp`, `rust`, `d`, `zig`, `odin`, `go`, and `asm`")
+            .fix(hint)
             .into_error());
     }
     if target_os != "linux" || target_arch != "x86_64" {

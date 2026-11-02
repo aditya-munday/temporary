@@ -64,6 +64,13 @@ pub enum HostileKind {
     NetworkAttempt,
     TamperWithResults,
     DeepRecursion,
+    SymlinkEscape,
+    ProcAndSysProbe,
+    PtraceAttempt,
+    FdExhaustion,
+    ClockTamper,
+    NestedSpawn,
+    HugeStderr,
 }
 
 impl HostileKind {
@@ -77,6 +84,13 @@ impl HostileKind {
             HostileKind::NetworkAttempt,
             HostileKind::TamperWithResults,
             HostileKind::DeepRecursion,
+            HostileKind::SymlinkEscape,
+            HostileKind::ProcAndSysProbe,
+            HostileKind::PtraceAttempt,
+            HostileKind::FdExhaustion,
+            HostileKind::ClockTamper,
+            HostileKind::NestedSpawn,
+            HostileKind::HugeStderr,
         ]
     }
 
@@ -186,6 +200,146 @@ __attribute__((noinline)) static unsigned long deep(unsigned long n) {
 int main(void) { printf("%lu\n", deep(100000000ul)); return 0; }
 "#
             }
+            HostileKind::SymlinkEscape => {
+                // Create a symlink inside the writable scratch that points at a
+                // host path, then follow it. The scratch is a tmpfs that cannot
+                // see the host filesystem, so the link resolves to nothing.
+                r#"#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+int main(void) {
+    const char *path = getenv("CCX_HOST_SECRET_PATH");
+    if (!path) { return 0; }
+    const char *link = "/work/scratch/escape";
+    unlink(link);
+    if (symlink(path, link) != 0) { return 0; }
+    FILE *f = fopen(link, "rb");
+    if (!f) { return 0; }
+    char buf[256];
+    size_t n;
+    while ((n = fread(buf, 1, sizeof buf, f)) > 0) { fwrite(buf, 1, n, stdout); }
+    fclose(f);
+    return 0;
+}
+"#
+            }
+            HostileKind::ProcAndSysProbe => {
+                // Reach for a host file through every /proc escape hatch a
+                // breakout would use, and try to read raw kernel memory. The
+                // sentinel path is a *host* path; PID 1's root is the container
+                // root, so none of these may expose it.
+                r#"#include <stdio.h>
+#include <stdlib.h>
+#include <string.h>
+int main(void) {
+    const char *host = getenv("CCX_HOST_SECRET_PATH");
+    int leaked = 0;
+    if (host) {
+        char via_root[4096];
+        snprintf(via_root, sizeof via_root, "/proc/1/root%s", host);
+        const char *targets[] = {host, via_root, "/proc/1/cwd", "/proc/kcore", "/proc/1/mem"};
+        for (unsigned i = 0; i < sizeof targets / sizeof targets[0]; i++) {
+            FILE *f = fopen(targets[i], "rb");
+            if (!f) { continue; }
+            char buf[4096];
+            size_t n = fread(buf, 1, sizeof buf, f);
+            if (n > 0) { leaked++; }
+            fclose(f);
+        }
+    }
+    printf("CCX_PROBE_LEAKED %d\n", leaked);
+    return 0;
+}
+"#
+            }
+            HostileKind::PtraceAttempt => {
+                // Attaching to another process needs CAP_SYS_PTRACE and a
+                // matching uid; the sandbox has neither. A successful attach
+                // would let the submission rewrite the runner's own state.
+                r#"#include <stdio.h>
+#include <sys/ptrace.h>
+#include <unistd.h>
+int main(void) {
+    if (ptrace(PTRACE_ATTACH, 1, 0, 0) == 0) {
+        puts("CCX_PTRACE_OK");
+        ptrace(PTRACE_DETACH, 1, 0, 0);
+        return 0;
+    }
+    return 0;
+}
+"#
+            }
+            HostileKind::FdExhaustion => {
+                // Open descriptors until the per-process limit stops us, bounded
+                // so the case stays quick. The runner must still report a clean
+                // result and the host must be unaffected.
+                r#"#include <stdio.h>
+#include <fcntl.h>
+int main(void) {
+    int opened = 0;
+    for (int i = 0; i < 100000; i++) {
+        int fd = open("/dev/null", O_RDONLY);
+        if (fd < 0) { break; }
+        opened++;
+    }
+    printf("CCX_FDS_OPENED %d\n", opened);
+    return 0;
+}
+"#
+            }
+            HostileKind::ClockTamper => {
+                // Try to move the clock the runner times against. time()/clock_
+                // settime require CAP_SYS_TIME, so both must fail; a wall-clock
+                // metric must never be spoofable from inside the sandbox.
+                r#"#include <stdio.h>
+#include <time.h>
+#include <sys/time.h>
+int main(void) {
+    struct timespec ts;
+    clock_gettime(CLOCK_REALTIME, &ts);
+    ts.tv_sec -= 3600;
+    int moved = clock_settime(CLOCK_REALTIME, &ts) == 0;
+    struct timeval tv = {.tv_sec = 0, .tv_usec = 0};
+    int moved2 = settimeofday(&tv, 0) == 0;
+    printf("CCX_CLOCK_MOVED %d %d\n", moved, moved2);
+    return 0;
+}
+"#
+            }
+            HostileKind::NestedSpawn => {
+                // Fork repeatedly and each child spawns more: the pids limit
+                // must stop the tree before it exhausts the host.
+                r#"#include <stdio.h>
+#include <unistd.h>
+#include <sys/wait.h>
+int main(void) {
+    int spawned = 0;
+    for (int i = 0; i < 64; i++) {
+        pid_t pid = fork();
+        if (pid == 0) {
+            for (;;) { pause(); }
+        }
+        if (pid < 0) { break; }
+        spawned++;
+    }
+    printf("CCX_SPAWNED %d\n", spawned);
+    while (waitpid(-1, 0, WNOHANG) > 0) {}
+    return 0;
+}
+"#
+            }
+            HostileKind::HugeStderr => {
+                // Flood stderr instead of stdout. The cap is on the combined
+                // captured output, so stderr alone must trip it.
+                r#"#include <stdio.h>
+#include <string.h>
+int main(void) {
+    char buf[4096];
+    memset(buf, 'E', sizeof buf);
+    for (;;) { fwrite(buf, 1, sizeof buf, stderr); }
+}
+"#
+            }
         }
     }
 }
@@ -262,6 +416,41 @@ pub fn hostile_suite() -> Vec<HostileCase> {
             kind: DeepRecursion,
             expect: Containment::Denied,
             note: "stack is fixed; overflow must be contained, not crash the host".into(),
+        },
+        HostileCase {
+            kind: SymlinkEscape,
+            expect: Containment::NoEffect,
+            note: "a symlink in scratch cannot reach the host filesystem".into(),
+        },
+        HostileCase {
+            kind: ProcAndSysProbe,
+            expect: Containment::Denied,
+            note: "kernel interfaces a breakout needs must be unreadable or empty".into(),
+        },
+        HostileCase {
+            kind: PtraceAttempt,
+            expect: Containment::Denied,
+            note: "CAP_SYS_PTRACE is dropped, so ptrace must fail".into(),
+        },
+        HostileCase {
+            kind: FdExhaustion,
+            expect: Containment::NoEffect,
+            note: "descriptor exhaustion must not leak host fds or break the report".into(),
+        },
+        HostileCase {
+            kind: ClockTamper,
+            expect: Containment::Denied,
+            note: "CAP_SYS_TIME is dropped; wall-clock metrics must not be spoofable".into(),
+        },
+        HostileCase {
+            kind: NestedSpawn,
+            expect: Containment::ProcessLimit,
+            note: "the pids limit must stop a spawning tree before it exhausts the host".into(),
+        },
+        HostileCase {
+            kind: HugeStderr,
+            expect: Containment::OutputCap,
+            note: "stderr must be capped like stdout".into(),
         },
     ]
 }

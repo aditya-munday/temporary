@@ -74,23 +74,31 @@ The engine, not the submission, decides the result.
 
 ## The hostile suite
 
-`scripts/safety-suite.sh` builds and runs eight adversarial programs inside the
-real pinned image and asserts containment by the *reason* each one stopped, not
-merely that it stopped:
+`scripts/safety-suite.sh` builds and runs fifteen adversarial programs inside
+the real pinned image and asserts containment by the *reason* each one stopped,
+not merely that it stopped:
 
 | Case | Expected containment |
 | --- | --- |
 | `infinite_loop` | Killed at the deadline (exit 124). |
 | `fork_bomb` | Descendants reaped; process cap hit. |
 | `huge_output` | Output cap hit (exit 125). |
+| `huge_stderr` | Stderr capped like stdout (exit 125). |
 | `memory_bomb` | Killed by the memory cap. |
 | `deep_recursion` | Killed on stack overflow (SIGSEGV). |
+| `nested_spawn` | A spawning tree is bounded by the pids limit. |
+| `fd_exhaustion` | Descriptor exhaustion does not break the report. |
 | `file_read_outside_sandbox` | An unmounted sentinel outside the mount set stays unreadable. |
+| `symlink_escape` | A scratch symlink cannot reach a host path. |
+| `proc_and_sys_probe` | No host bytes are readable through `/proc/1/root`, `/proc/kcore`, or `/proc/1/mem`. |
+| `ptrace_attempt` | Attaching to another process is refused. |
+| `clock_tamper` | `clock_settime` and `settimeofday` are refused. |
 | `network_attempt` | The connection does not succeed. |
 | `tamper_with_results` | The host source is unchanged. |
 
 The suite is part of `container-engine` CI, so a regression in containment fails
-the build.
+the build. The case sources live in `crates/ccx-core/src/sandbox.rs` and are
+extracted by the suite, so the suite and the definition cannot drift apart.
 
 ## What this does not protect against
 

@@ -2,6 +2,40 @@
 
 ## Unreleased
 
+- Harden the capsule parser and prove it. New `capsule_robustness` tests cover
+  migration idempotency, rejection of unknown and future versions, a path from
+  every historical version to the current one, goldens for every language, and a
+  fuzzer that feeds garbage, truncated, and structurally wrong documents to the
+  parser. The fuzzer found a real panic: `migrate_value` indexed a nested field
+  without checking it was an object. `migrate.rs` now uses total `get`/`set`
+  accessors, so a malformed document is a typed error, never a panic.
+
+- Widen the hostile suite from eight cases to fifteen. New cases cover a
+  spawning tree, descriptor exhaustion, a scratch symlink pointing at a host
+  path, `/proc` escape hatches and raw kernel memory, `ptrace`, clock tampering,
+  and stderr flooding. `scripts/safety-suite.sh` runs all fifteen against the
+  real pinned image and asserts containment by reason; all fifteen pass on the
+  x86-64 Linux host.
+
+- Name the planned language slots honestly. The capability matrix now lists Nim,
+  Ada, Fortran, and ARM64 assembly as `planned` rows with every capability `no`,
+  `ccx init` rejects them with the reason they need a pinned image, runner
+  support, and a problem fixture, and `docs/LANGUAGES.md` documents the status
+  column and how a slot is promoted to `available`.
+
+- Make a non-x86-64 host fail clearly. `ccx doctor` now reports a `host platform`
+  check that is `MISS` on any architecture other than x86-64, with the reason
+  (the pinned execution images are x86-64) and the fix, instead of letting
+  Docker fall back to slow, non-deterministic emulation.
+
+- Add `.devcontainer/devcontainer.json` and `scripts/devcontainer-setup.sh` so a
+  Codespace or devcontainer comes up with Docker-in-Docker, Rust 1.85.1, and the
+  pinned toolchain images already built and `ccx doctor` ready.
+
+- Move the standalone guides under `docs/` (`AUTHORING.md`, `LIMITATIONS.md`,
+  `METHODOLOGY.md`, `PERFORMANCE_FINDINGS.md`, `PLATFORM_SUPPORT.md`) and update
+  every reference in the README, CONTRIBUTING, and the source comments.
+
 - Add a release pipeline (`.github/workflows/release.yml`). Pushing a `v*` tag
   builds `ccx` for x86-64 Linux, x86-64 macOS, Apple Silicon macOS, and x86-64
   Windows, packages each as a `tar.gz`/`zip` with the README, LICENSE,

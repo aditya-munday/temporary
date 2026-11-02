@@ -74,6 +74,28 @@ pub fn run(format: Format) -> anyhow::Result<()> {
         (!docker_ok).then_some("start it: `sudo dockerd &` or `sudo systemctl start docker`"),
     ));
 
+    // Host platform (Group G3). The pinned execution target is Linux x86-64, so
+    // a host on another architecture (for example Apple Silicon / ARM64) gets a
+    // clear, actionable message instead of a confusing container failure.
+    let host_arch = std::env::consts::ARCH;
+    let host_os = std::env::consts::OS;
+    let host_supported = host_arch == "x86_64";
+    checks.push(check(
+        "host platform",
+        host_supported,
+        if host_supported {
+            format!("{host_os}/{host_arch} is a supported execution host")
+        } else {
+            format!(
+                "{host_os}/{host_arch} cannot run the pinned x86-64 execution images \
+                 (Docker would fall back to slow, non-deterministic emulation)"
+            )
+        },
+        (!host_supported).then_some(
+            "run on an x86-64 host, or open the devcontainer (see docs/PLATFORM_SUPPORT.md)",
+        ),
+    ));
+
     // Pinned images, by digest.
     for name in [
         ToolchainName::Gcc,

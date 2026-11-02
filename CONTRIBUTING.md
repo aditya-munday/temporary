@@ -20,7 +20,7 @@ samples taken on one host.
 
 ## Problem changes
 
-Use the structure and constraints in [PROBLEM_AUTHORING.md](PROBLEM_AUTHORING.md).
+Use the structure and constraints in [AUTHORING.md](docs/AUTHORING.md).
 Keep generators deterministic for the same seed and make statements,
 references, limits, and sample solutions agree. Include evidence that the
 problem distinguishes the intended performance tradeoff.

@@ -154,11 +154,12 @@ known gaps in the expanded Phase 1 target:
   solution source paths; Go reports source-local inlining and escape analysis.
   Rust, Zig, and Odin do not currently expose remarks in their profiles, and
   line-level source correlation is not implemented for every compiler.
-- `scripts/safety-suite.sh` passed all eight hostile cases on the current
-  x86-64 Linux Docker host, including timeout, fork bomb, output cap, memory
-  exhaustion, stack exhaustion, host-file read, network, and read-only mount
-  tampering checks. This does not verify containment on Windows or macOS hosts;
-  those host integrations remain outstanding.
+- `scripts/safety-suite.sh` passed all fifteen hostile cases on the current
+  x86-64 Linux Docker host: timeout, fork bomb, output cap (stdout and stderr),
+  memory exhaustion, stack exhaustion, nested spawning, descriptor exhaustion,
+  host-file read, symlink escape, `/proc` probing, `ptrace`, clock tampering,
+  network, and read-only mount tampering. This does not verify containment on
+  Windows or macOS hosts; those host integrations remain outstanding.
 - There is no published release or outside-user installation report yet.
 
 Do not interpret these absences as completed Phase 1 gates. They are visible

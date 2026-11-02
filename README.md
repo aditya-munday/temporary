@@ -22,7 +22,7 @@ with a `SHA256SUMS` file; or build from source with `cargo build --release`.
 Hosted native CLI checks pass on Ubuntu 24.04, Windows Server 2022, macOS 15
 Intel, and macOS 15 Apple Silicon. End-to-end Docker builds, execution, and
 measurements are verified on x86-64 Linux; Windows and macOS Docker Desktop
-integration remains unverified. See [platform support](PLATFORM_SUPPORT.md) for
+integration remains unverified. See [platform support](docs/PLATFORM_SUPPORT.md) for
 host/compiler options and their validation status.
 Debian package versions and the archive snapshot are pinned in the Dockerfiles
 and `docker/toolchains.lock.json`.
@@ -221,19 +221,19 @@ Each problem lives in `problems/<id>/` and includes metadata, a statement,
 seeded C generator, brute-force oracle, reference C++ solution, editorial,
 hints, and three C++ performance variants. `ccx validate` checks the oracle,
 variants, and three-run stability of their counters and allocation records. See
-[problem authoring](PROBLEM_AUTHORING.md).
+[problem authoring](docs/AUTHORING.md).
 
 The included problems cover pair counting, top-K selection, delimited parsing,
 FIFO queues, and record storage layouts.
 
-See [a measured pair-counting comparison](PERFORMANCE_FINDINGS.md) for a
+See [a measured pair-counting comparison](docs/PERFORMANCE_FINDINGS.md) for a
 replayable example with source-mapped assembly, counters, and capsule diffs.
 
 ## Trust and limitations
 
-Read [METHODOLOGY.md](METHODOLOGY.md), [CAPSULE_SPEC.md](CAPSULE_SPEC.md),
+Read [METHODOLOGY.md](docs/METHODOLOGY.md), [CAPSULE_SPEC.md](CAPSULE_SPEC.md),
 [LANGUAGES.md](docs/LANGUAGES.md), [SECURITY.md](SECURITY.md), and
-[LIMITATIONS.md](LIMITATIONS.md) before
+[LIMITATIONS.md](docs/LIMITATIONS.md) before
 comparing or citing results. Simulated
 counter values are comparable only when the measured binary, input, toolchain,
 and simulator configuration match. Wall-clock time is host-specific.

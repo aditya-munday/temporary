@@ -22,6 +22,9 @@ pub struct ProfileCatalog {
 pub struct LanguageCapabilities {
     pub language: String,
     pub toolchain: String,
+    /// `available` (pinned and tested), `planned` (designed but not pinned),
+    /// or `unavailable` (no pinned toolchain in the lock).
+    pub status: String,
     pub instructions: bool,
     pub cache_simulation: bool,
     pub branch_simulation: bool,
@@ -147,6 +150,7 @@ fn capability_matrix(has_c_cpp: bool) -> Vec<LanguageCapabilities> {
             LanguageCapabilities {
                 language: language.into(),
                 toolchain: "gcc".into(),
+                status: "available".into(),
                 instructions: true,
                 cache_simulation: true,
                 branch_simulation: true,
@@ -185,6 +189,7 @@ fn capability_matrix(has_c_cpp: bool) -> Vec<LanguageCapabilities> {
     rows.push(LanguageCapabilities {
         language: "rust".into(),
         toolchain: "rust".into(),
+        status: "available".into(),
         instructions: true,
         cache_simulation: true,
         branch_simulation: true,
@@ -203,6 +208,7 @@ fn capability_matrix(has_c_cpp: bool) -> Vec<LanguageCapabilities> {
         rows.push(LanguageCapabilities {
             language: language.into(),
             toolchain: language.into(),
+            status: "available".into(),
             instructions: true,
             cache_simulation: true,
             branch_simulation: true,
@@ -218,6 +224,7 @@ fn capability_matrix(has_c_cpp: bool) -> Vec<LanguageCapabilities> {
     rows.push(LanguageCapabilities {
         language: "go".into(),
         toolchain: "go".into(),
+        status: "available".into(),
         instructions: true,
         cache_simulation: true,
         branch_simulation: true,
@@ -235,6 +242,7 @@ fn capability_matrix(has_c_cpp: bool) -> Vec<LanguageCapabilities> {
     rows.push(LanguageCapabilities {
         language: "d".into(),
         toolchain: "gdc".into(),
+        status: "available".into(),
         instructions: true,
         cache_simulation: true,
         branch_simulation: true,
@@ -254,6 +262,7 @@ fn capability_matrix(has_c_cpp: bool) -> Vec<LanguageCapabilities> {
                 *row = LanguageCapabilities {
                     language: row.language.clone(),
                     toolchain: "gcc".into(),
+                    status: "unavailable".into(),
                     instructions: false,
                     cache_simulation: false,
                     branch_simulation: false,
@@ -268,6 +277,53 @@ fn capability_matrix(has_c_cpp: bool) -> Vec<LanguageCapabilities> {
                 };
             }
         }
+    }
+    // Planned slots (Group B6). These languages are named so the catalog can
+    // explain and disable them; they are *not* claimed as supported, because no
+    // pinned image, runner support, or test exists. Every capability is false
+    // and the status is `planned`, so a client can never mistake one for a
+    // working profile.
+    for (language, toolchain, reason) in [
+        (
+            "nim",
+            "nim",
+            "Nim is planned: it needs a pinned image, a runner entry, and a problem \
+             fixture before it can be claimed",
+        ),
+        (
+            "ada",
+            "gnat",
+            "Ada (GNAT) is planned: it needs a pinned image, a runner entry, and a \
+             problem fixture before it can be claimed",
+        ),
+        (
+            "fortran",
+            "gfortran",
+            "Fortran is planned: it needs a pinned image, a runner entry, and a problem \
+             fixture before it can be claimed",
+        ),
+        (
+            "asm-aarch64",
+            "aarch64-as",
+            "ARM64 assembly is planned: the only pinned execution target is Linux \
+             x86-64, so there is no runner for it yet",
+        ),
+    ] {
+        rows.push(LanguageCapabilities {
+            language: language.into(),
+            toolchain: toolchain.into(),
+            status: "planned".into(),
+            instructions: false,
+            cache_simulation: false,
+            branch_simulation: false,
+            allocations: false,
+            peak_memory: false,
+            binary_size: false,
+            compiler_remarks: false,
+            asm_view: false,
+            repeatability_grade: "unavailable".into(),
+            repeatability_notes: reason.into(),
+        });
     }
     rows
 }
@@ -406,6 +462,40 @@ pub fn catalog() -> ProfileCatalog {
         language_profile("go", vec![toolchain_profile(ToolchainName::Go)]),
         language_profile("zig", vec![toolchain_profile(ToolchainName::Zig)]),
         language_profile("d", vec![toolchain_profile(ToolchainName::Gdc)]),
+        // Planned slots (Group B6): named so clients can show and disable them,
+        // with no pinned toolchain and no support claimed.
+        language_profile(
+            "nim",
+            vec![unavailable_toolchain(
+                "nim",
+                "nim",
+                "planned: needs a pinned image, a runner entry, and a problem fixture",
+            )],
+        ),
+        language_profile(
+            "ada",
+            vec![unavailable_toolchain(
+                "gnat",
+                "gnatmake",
+                "planned: needs a pinned image, a runner entry, and a problem fixture",
+            )],
+        ),
+        language_profile(
+            "fortran",
+            vec![unavailable_toolchain(
+                "gfortran",
+                "gfortran",
+                "planned: needs a pinned image, a runner entry, and a problem fixture",
+            )],
+        ),
+        language_profile(
+            "asm-aarch64",
+            vec![unavailable_toolchain(
+                "aarch64-as",
+                "aarch64-linux-gnu-as",
+                "planned: the only pinned execution target is Linux x86-64",
+            )],
+        ),
     ];
 
     ProfileCatalog {
@@ -610,9 +700,10 @@ pub fn run(format: Format) -> anyhow::Result<()> {
             }
             println!("\nCapability matrix (per language; missing = unavailable, never zero)");
             println!(
-                "  {:<6} {:<12} {:<5} {:<7} {:<8} {:<12} {:<12} {:<12} {:<9} {:<8} repeatability",
+                "  {:<12} {:<12} {:<11} {:<5} {:<7} {:<8} {:<12} {:<12} {:<12} {:<9} {:<8} repeatability",
                 "lang",
                 "toolchain",
+                "status",
                 "instr",
                 "cache",
                 "branch",
@@ -625,9 +716,10 @@ pub fn run(format: Format) -> anyhow::Result<()> {
             for row in &report.capabilities {
                 let mark = |value: bool| if value { "yes" } else { "no" };
                 println!(
-                    "  {:<6} {:<12} {:<5} {:<7} {:<8} {:<12} {:<12} {:<12} {:<9} {:<8} {}",
+                    "  {:<12} {:<12} {:<11} {:<5} {:<7} {:<8} {:<12} {:<12} {:<12} {:<9} {:<8} {}",
                     row.language,
                     row.toolchain,
+                    row.status,
                     mark(row.instructions),
                     mark(row.cache_simulation),
                     mark(row.branch_simulation),
@@ -685,12 +777,26 @@ mod tests {
     fn catalog_exposes_current_and_unavailable_profiles() {
         let report = catalog();
         assert_eq!(report.schema_version, 12);
-        assert_eq!(report.languages.len(), 8);
+        assert_eq!(report.languages.len(), 12);
         assert!(report
             .languages
             .iter()
             .any(|language| language.language == "asm" && language.available));
         assert_eq!(report.capabilities.len(), report.languages.len());
+        // Planned slots exist but are never available.
+        for planned in ["nim", "ada", "fortran", "asm-aarch64"] {
+            assert!(report
+                .languages
+                .iter()
+                .any(|language| language.language == planned && !language.available));
+            let row = report
+                .capabilities
+                .iter()
+                .find(|row| row.language == planned)
+                .unwrap_or_else(|| panic!("capability row for {planned}"));
+            assert_eq!(row.status, "planned");
+            assert!(!row.instructions && !row.cache_simulation && !row.asm_view);
+        }
         assert!(report
             .execution_targets
             .iter()

@@ -18,6 +18,53 @@
 use super::{CapsuleError, CURRENT_SCHEMA_VERSION, LEGACY_BINARY_DIGEST_UNAVAILABLE};
 use serde_json::Value;
 
+/// Read a nested field without panicking, whatever the intermediate types are.
+fn get<'a>(value: &'a Value, path: &[&str]) -> Option<&'a Value> {
+    let mut current = value;
+    for key in path {
+        current = current.as_object()?.get(*key)?;
+    }
+    Some(current)
+}
+
+/// Set a nested field, creating the intermediate objects if they are missing.
+///
+/// Migrations must be *total*: a capsule that arrives malformed is rejected by
+/// deserialisation afterwards, never by a panic here. Indexing a
+/// `serde_json::Value` that turned out to be a string, number, or array panics,
+/// so every nested write goes through this instead of `value["a"]["b"] = ...`.
+fn set(value: &mut Value, path: &[&str], new: Value) {
+    let Some((head, rest)) = path.split_first() else {
+        *value = new;
+        return;
+    };
+    if !value.is_object() {
+        *value = Value::Object(serde_json::Map::new());
+    }
+    let map = value.as_object_mut().expect("just ensured object");
+    let entry = map.entry((*head).to_string()).or_insert(Value::Null);
+    set(entry, rest, new);
+}
+
+/// Borrow a nested object, creating it (and its parents) if needed.
+fn object_at<'a>(value: &'a mut Value, path: &[&str]) -> &'a mut serde_json::Map<String, Value> {
+    if !value.is_object() {
+        *value = Value::Object(serde_json::Map::new());
+    }
+    let mut current = value;
+    for key in path {
+        if !current.is_object() {
+            *current = Value::Object(serde_json::Map::new());
+        }
+        let map = current.as_object_mut().expect("just ensured object");
+        current = map.entry((*key).to_string()).or_insert(Value::Null);
+    }
+    if !current.is_object() {
+        *current = Value::Object(serde_json::Map::new());
+    }
+    current.as_object_mut().expect("just ensured object")
+}
+
 /// Migrate a raw capsule document up to the current schema version.
 pub fn migrate_value(value: Value, from: u32) -> Result<Value, CapsuleError> {
     if from > CURRENT_SCHEMA_VERSION {
@@ -64,7 +111,11 @@ pub fn migrate_value(value: Value, from: u32) -> Result<Value, CapsuleError> {
                 version = 9;
             }
             9 => {
-                value["toolchain"]["environment_fingerprint"] = serde_json::Value::Null;
+                set(
+                    &mut value,
+                    &["toolchain", "environment_fingerprint"],
+                    Value::Null,
+                );
                 value["schema_version"] = serde_json::json!(10);
                 version = 10;
             }
@@ -73,8 +124,11 @@ pub fn migrate_value(value: Value, from: u32) -> Result<Value, CapsuleError> {
                 version = 11;
             }
             11 => {
-                value["build"]["binary_sha256"] =
-                    serde_json::json!(LEGACY_BINARY_DIGEST_UNAVAILABLE);
+                set(
+                    &mut value,
+                    &["build", "binary_sha256"],
+                    serde_json::json!(LEGACY_BINARY_DIGEST_UNAVAILABLE),
+                );
                 value["schema_version"] = serde_json::json!(12);
                 version = 12;
             }
@@ -83,18 +137,17 @@ pub fn migrate_value(value: Value, from: u32) -> Result<Value, CapsuleError> {
                 version = 13;
             }
             13 => {
-                value["build"]["build_repeat"] = serde_json::json!(1);
-                let runs = value["repeatability"]["runs"].as_u64();
-                if let Some(metrics) = value["repeatability"]["per_metric"].as_object_mut() {
+                set(&mut value, &["build", "build_repeat"], serde_json::json!(1));
+                let runs = get(&value, &["repeatability", "runs"]).and_then(Value::as_u64);
+                {
+                    let metrics = object_at(&mut value, &["repeatability", "per_metric"]);
                     metrics.remove("build_wall_clock");
                     metrics.remove("build_user_cpu_time");
                     metrics.remove("build_system_cpu_time");
-                }
-                if let (Some(runs), Some(metrics)) =
-                    (runs, value["repeatability"]["per_metric"].as_object_mut())
-                {
-                    for spread in metrics.values_mut() {
-                        spread["samples"] = serde_json::json!(runs);
+                    if let Some(runs) = runs {
+                        for spread in metrics.values_mut() {
+                            set(spread, &["samples"], serde_json::json!(runs));
+                        }
                     }
                 }
                 if let Some(metrics) = value["metrics"].as_array_mut() {
@@ -108,7 +161,7 @@ pub fn migrate_value(value: Value, from: u32) -> Result<Value, CapsuleError> {
                                 object.remove("uncertainty");
                             }
                             if name == "build_wall_clock" {
-                                metric["kind"] = serde_json::json!("measured");
+                                set(metric, &["kind"], serde_json::json!("measured"));
                             }
                         }
                     }

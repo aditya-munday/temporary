@@ -352,7 +352,7 @@ Hard-won facts, each of which was a real bug:
    (0.043% on Rust/C++ `branch_misses`). Raw samples must still be constant
    within each host, so this admits a per-host offset, not within-host noise.
    `ccx replay` applies the same recorded bound. See `CAPSULE_SPEC.md` §16 and
-   `METHODOLOGY.md`.
+   `docs/METHODOLOGY.md`.
 8. **Editing the runner invalidates every committed capsule.** The runner's
    SHA-256 is folded into the toolchain `environment_fingerprint`, which is in
    turn folded into the pinned image digest, and `Capsule::same_environment()`
@@ -367,6 +367,24 @@ Hard-won facts, each of which was a real bug:
    deterministic counters are unchanged, only the indicative timing moves.
    `scripts/compare-capsules.py` enforces the lock/capsule fingerprint match in
    CI, so the lock and the capsules must move together.
+9. **A migration must be total, or a malformed capsule takes the process down.**
+   `serde_json::Value` indexes panic when the value at a key is a string,
+   number, or array rather than an object: `value["toolchain"]["environment_fingerprint"] = ...`
+   panics on `{"toolchain": 5}`. The capsule fuzzer (`capsule_robustness.rs`)
+   found exactly this in `migrate_value`. Every nested read and write in
+   `capsule/migrate.rs` now goes through the total `get`/`set`/`object_at`
+   helpers, so a hostile or truncated document becomes a typed `CapsuleError`
+   after deserialisation, never a panic. When you add a migration step, use
+   those helpers; do not reintroduce indexing.
+10. **A hostile case that asserts the wrong premise is worse than no case.** The
+    first `proc_and_sys_probe` case read `/proc/1/environ` expecting host data,
+    but PID 1 inside the container namespace is the runner, not the host, so the
+    read legitimately succeeded and the case "failed". A containment case must
+    name the exact escape it forbids. The corrected case asserts that
+    `/proc/1/root`, `/proc/kcore`, and `/proc/1/mem` yield no host bytes. The
+    `nested_spawn` case similarly timed out because the spawned descendants hold
+    the output pipe open; the case now reads only the parent's exit and treats a
+    pids-limit refusal as the expected containment.
 
 ### Known-honest results (not bugs)
 
@@ -380,17 +398,25 @@ Hard-won facts, each of which was a real bug:
 - Go counter spread between fresh processes is wider than the ranking gate, so
   Go measurements require `--repeat 20` and stay UNRANKED until the spread is
   within the documented tolerance.
+- Nim, Ada, Fortran, and ARM64 assembly appear in `ccx languages` as `planned`
+  rows with every capability `no` and repeatability `unavailable`. They are
+  named so a client can disable them with a reason; no support is claimed.
 
 ### Verified state
 
 - `cargo fmt --all -- --check`: clean.
 - `cargo clippy --workspace --all-targets -- -D warnings`: clean.
-- `cargo test --workspace --release`: 211 tests pass (148 core + 63 CLI), 1 ignored.
+- `cargo test --workspace --release`: 217 tests pass (148 core + 63 CLI + 6
+  integration), 1 ignored. `capsule_robustness.rs` adds the parser fuzz and
+  migration-path tests.
 - `python3 -m unittest scripts/test_compare_capsules.py`: 22 tests pass.
 - `ccx measure` on the naive solution: all metrics present and correctly
   labelled.
 - `ccx replay capsule.json`: exit 0, every deterministic metric matches exactly,
   only the indicative `peak_memory` drifts as expected.
+- `scripts/safety-suite.sh`: 15/15 hostile cases pass on the x86-64 Linux host.
+- `ccx doctor`: `ready: true` on the pinned x86-64 Linux host; the `host
+  platform` check reports `MISS` with the reason and fix on any other arch.
 
 ### Release and supply chain
 

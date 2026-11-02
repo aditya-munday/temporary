@@ -6,3 +6,6 @@ __pycache__/
 *.pyc
 docker/*.tar.gz
 docker/*.tar.xz
+
+# Local agent handoff notes, not part of the project.
+PHASE1_AGENT_PROMPT.txt
