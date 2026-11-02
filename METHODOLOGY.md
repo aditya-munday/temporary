@@ -21,6 +21,7 @@ counters carry process and host variation.
 | `voluntary_context_switches`, `involuntary_context_switches` | measured | `getrusage` | Process scheduler switch counts |
 | `block_input_ops`, `block_output_ops` | measured | `getrusage` | Linux block-I/O operation counts, not byte totals |
 | `instructions_hw`, `cache_misses_hw`, `branch_misses_hw`, `cpu_cycles_hw` | measured when available | Linux `perf_event_open` | Host hardware events; multiplexed counts are time-scaled, and unavailable events are omitted |
+| `l1d_cache_misses_hw`, `l1i_cache_misses_hw`, `llc_cache_misses_hw`, `dtlb_cache_misses_hw`, `itlb_cache_misses_hw` | measured when available | Linux `perf_event_open` (`PERF_TYPE_HW_CACHE`, read misses) | Portable cache-hierarchy and TLB miss events; a host that exposes some and not others leaves the rest absent |
 | `ipc_hw`, `average_cpu_frequency_hw` | measured when available | derived from `perf_event_open` and `getrusage` | Instructions per cycle and effective average frequency during user CPU time; host-specific |
 | `build_wall_clock` | measured | runner monotonic clock | Median across three clean builds with identical executable bytes; host-dependent, with observed spread and bootstrap interval |
 | `build_user_cpu_time`, `build_system_cpu_time` | measured | `getrusage` | Median across three clean builds with identical executable bytes; host-dependent, with observed spread and bootstrap interval |
@@ -53,6 +54,21 @@ median, observed p95 and p99, and
 OS counters finite. When at least two samples exist it also stores a seeded
 bootstrap 95% confidence interval of the median. The default is twenty runs,
 matching the Phase 1 local repeatability sample size.
+
+Immediately before and after those measured runs, `ccx measure` runs a fixed
+host-noise canary: a small, self-contained C workload that allocates and touches
+a fixed buffer and does a bounded amount of integer and floating-point work.
+Because the workload never changes, the drift between its two wall clocks is a
+property of the host — a busy neighbour, a frequency-policy change, a machine
+that throttled mid-run — and not the solution. The capsule records both samples,
+the relative drift, the tolerance it was judged against, and a status of
+`stable`, `drifted`, or `unavailable`. The canary is advisory: it never changes a
+metric or a verdict, and a canary that cannot run is recorded as `unavailable`
+with a reason rather than failing the measurement. A `drifted` status is the
+platform's way of saying "these indicative numbers were taken on a busy host",
+and `ccx replay` surfaces it as a note. The default drift tolerance is 20%,
+deliberately generous, so the canary catches gross drift rather than adding a
+second, hidden flake source.
 
 The measurement table and JSON report include the execution target, host
 fingerprint, pinned toolchain environment fingerprint, and each metric's
@@ -116,6 +132,24 @@ most 0.01%. Matrix pairwise comparisons are withheld when either profile fails
 that check. This same-host repeatability gate does not replace the separate
 multi-runner equality check, and eligibility does not make wall time or
 hardware counters comparable between machines.
+
+Ranking uses statistical tie groups. Two profiles whose 95% intervals overlap
+share a rank, because a difference smaller than the interval is not a
+difference the counters can support. Ties are transitive: if A overlaps B and B
+overlaps C, all three share one group even when A and C do not overlap directly.
+Ranks are competition ranks ("1224"): a group carries the rank of its first
+member and the next distinct value skips the ranks the group consumed. Profiles
+whose repeatability is ineligible are excluded from the ranking, never ranked
+last, so an unrankable profile cannot appear to lose on merit.
+
+`ccx pareto` answers the trade-off question the single rank hides: among
+several capsules, which are not beaten on every deterministic axis at once? A
+capsule is dominated when another is at least as good on every axis and strictly
+better on one; the survivors are the frontier. The default axes are
+`instructions`, `peak_memory`, and `binary_size`. A wall-clock or
+hardware-counter axis is refused, because a frontier over a noise axis draws
+noise as if it were structure. A capsule missing an axis is kept off the
+frontier and reported as incomplete rather than treated as infinitely bad.
 
 `ccx diff` calls metric changes conclusive only when both capsules record the
 same input bytes, problem definition, language, compiler profile and environment,
@@ -214,13 +248,19 @@ network access, process count, memory, and output limits. Source and input
 mounts are read-only. The executable runs as a non-root user. Cachegrind numbers
 are simulated, not hardware observations. When the sandbox kernel permits
 `perf_event_open`, the runner records hardware instructions, CPU cycles, cache
-misses, and branch misses alongside the simulated counters. It derives IPC and
-an effective average CPU frequency from those events and user CPU time; these
-are host-specific summaries, not live frequency samples. A gated child start
-excludes counter setup time from the solution's wall-clock interval. Events that
-cannot be opened or scheduled are omitted; `ccx doctor` probes the same runner
-inside the pinned sandbox image. Hardware events can vary by CPU model and
+misses, and branch misses alongside the simulated counters, plus the portable
+cache-hierarchy and TLB read-miss events (L1d, L1i, LLC, dTLB, iTLB). It derives
+IPC and an effective average CPU frequency from those events and user CPU time;
+these are host-specific summaries, not live frequency samples. A gated child
+start excludes counter setup time from the solution's wall-clock interval. Events
+that cannot be opened or scheduled are omitted; `ccx doctor` probes the same
+runner inside the pinned sandbox image. Hardware events can vary by CPU model and
 kernel and are not compared across hosts as if they were simulated counts.
+
+The generic `perf` cache interface has no portable L2 event: only L1d, L1i, LLC,
+and the two TLBs are architecture-independent, so a host's L2 is reported by the
+vendor-specific event set, not by this one. The LLC counter stands in for the
+outermost cache level.
 
 The Linux runner records `getrusage` CPU time, page faults, context switches,
 block-I/O operations, and peak RSS for the direct child process. It does not
@@ -284,14 +324,14 @@ ratios had 208.36% and 139.25% spread. These wide ranges are one-host evidence
 that wall time remains too noisy for ranking in this environment. The
 deterministic metrics repeat exactly here, not as a cross-machine claim.
 
-Ten current harness-0.18.0 capsules cover the supported languages and single- or
-multi-file layouts, and one harness-0.19.0 capsule covers x86-64 assembly. Their
-observed instruction, simulated cache-miss, and candidate wall-clock spreads on
-this one host are:
+Ten harness-0.18.0 capsules cover the supported languages and single- or
+multi-file layouts, and one schema-17 harness-0.19.0 capsule covers x86-64
+assembly on the refreshed runner. Their observed instruction, simulated
+cache-miss, and candidate wall-clock spreads on this one host are:
 
 | Capsule | Language | Instructions | Cache misses | Wall time |
 | --- | --- | ---: | ---: | ---: |
-| [x86-64 assembly](arena/asm/capsule.phase1.json) | assembly | 0.00% | 0.00% | 16.47% |
+| [x86-64 assembly](arena/asm/capsule.phase1.json) | assembly | 0.00% | 0.00% | 18.73% |
 | [C multi-file](arena/c-multifile/capsule.phase1.v0.18.json) | C | 0.00% | 0.00% | 169.44% |
 | [D](arena/d/capsule.phase1.v0.18.json) | D | 0.00% | 0.00% | 289.48% |
 | [Go](arena/go/capsule.phase1.v0.18.json) | Go | 0.79% | 6.69% | 56.43% |

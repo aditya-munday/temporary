@@ -335,6 +335,11 @@ pub fn run(format: Format) -> anyhow::Result<()> {
             ("cache misses", counters.cache_misses),
             ("branch misses", counters.branch_misses),
             ("CPU cycles", counters.cpu_cycles),
+            ("L1d misses", counters.l1d_cache_misses),
+            ("L1i misses", counters.l1i_cache_misses),
+            ("LLC misses", counters.llc_cache_misses),
+            ("dTLB misses", counters.dtlb_cache_misses),
+            ("iTLB misses", counters.itlb_cache_misses),
         ]
         .into_iter()
         .filter_map(|(name, value)| value.map(|_| name))

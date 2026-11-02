@@ -191,11 +191,19 @@ profiles are limited to the safe C/C++ argv template.
 
 ## Commands
 
-`ccx doctor`, `init`, `build`, `run`, `test`, `measure`, `matrix`, `asm`, `diff`,
-`replay`, and `validate` are available. Add `--format json` for machine-readable
-reports. `ccx build` stores the binary under `.ccx/out` using its SHA-256 in the
-filename; intermediate files use a per-invocation scratch directory. Run
-`ccx --help` and `ccx <command> --help` for arguments.
+`ccx doctor`, `init`, `build`, `run`, `test`, `measure`, `matrix`, `pareto`,
+`asm`, `diff`, `replay`, and `validate` are available. Add `--format json` for
+machine-readable reports. `ccx build` stores the binary under `.ccx/out` using
+its SHA-256 in the filename; intermediate files use a per-invocation scratch
+directory. Run `ccx --help` and `ccx <command> --help` for arguments.
+
+`ccx matrix` groups the profiles it compares into statistical tie groups: two
+profiles whose measurement intervals overlap share a rank, because a difference
+inside the noise is not a difference. `ccx pareto` plots capsules against
+deterministic metrics (default `instructions`, `peak_memory`, `binary_size`)
+and reports which are dominated and which are on the frontier; it refuses a
+wall-clock or hardware-counter axis because a frontier over a noisy axis is a
+drawing of noise.
 
 ## Problems
 

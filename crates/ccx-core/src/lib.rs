@@ -10,6 +10,7 @@ pub mod explain;
 pub mod host;
 pub mod measure;
 pub mod problem;
+pub mod ranking;
 pub mod sandbox;
 pub mod toolchain;
 

@@ -78,6 +78,11 @@ struct hardware_fds {
     int cache_misses;
     int branch_misses;
     int cpu_cycles;
+    int l1d_cache_misses;
+    int l1i_cache_misses;
+    int llc_cache_misses;
+    int dtlb_cache_misses;
+    int itlb_cache_misses;
 };
 
 static int open_hardware_counter(pid_t pid, uint64_t event) {
@@ -105,6 +110,41 @@ static int open_hardware_counter(pid_t pid, uint64_t event) {
 #else
     (void)pid;
     (void)event;
+    return -1;
+#endif
+}
+
+/* A cache-hierarchy event. `cache` is one of PERF_COUNT_HW_CACHE_L1D, _L1I,
+   _LL, _DTLB, _ITLB; `op` and `result` are the access and outcome selectors.
+   These are the portable perf cache events, so a host that exposes some of
+   them and not others simply leaves the rest null. */
+static int open_cache_counter(pid_t pid, uint64_t cache, uint64_t op, uint64_t result) {
+#ifdef SYS_perf_event_open
+    struct perf_event_attr attr;
+    memset(&attr, 0, sizeof attr);
+    attr.type = PERF_TYPE_HW_CACHE;
+    attr.size = sizeof attr;
+    attr.config = cache | (op << 8) | (result << 16);
+    attr.disabled = 1;
+    attr.inherit = 1;
+    attr.inherit_stat = 1;
+    attr.read_format = PERF_FORMAT_TOTAL_TIME_ENABLED | PERF_FORMAT_TOTAL_TIME_RUNNING;
+    attr.exclude_kernel = 1;
+    attr.exclude_hv = 1;
+    int fd = (int)syscall(SYS_perf_event_open, &attr, pid, -1, -1, 0);
+    if (fd < 0) {
+        return -1;
+    }
+    if (ioctl(fd, PERF_EVENT_IOC_RESET, 0) != 0 || ioctl(fd, PERF_EVENT_IOC_ENABLE, 0) != 0) {
+        close(fd);
+        return -1;
+    }
+    return fd;
+#else
+    (void)pid;
+    (void)cache;
+    (void)op;
+    (void)result;
     return -1;
 #endif
 }
@@ -578,13 +618,28 @@ int main(int argc, char **argv) {
     /* Parent: drain both pipes with a deadline, capping total output. */
     close(out_pipe[1]);
     close(err_pipe[1]);
-    struct hardware_fds hardware_fds = {-1, -1, -1, -1};
+    struct hardware_fds hardware_fds = {-1, -1, -1, -1, -1, -1, -1, -1, -1};
     if (collect_hardware && gate_pipe[0] >= 0) {
         close(gate_pipe[0]);
         hardware_fds.instructions = open_hardware_counter(pid, PERF_COUNT_HW_INSTRUCTIONS);
         hardware_fds.cache_misses = open_hardware_counter(pid, PERF_COUNT_HW_CACHE_MISSES);
         hardware_fds.branch_misses = open_hardware_counter(pid, PERF_COUNT_HW_BRANCH_MISSES);
         hardware_fds.cpu_cycles = open_hardware_counter(pid, PERF_COUNT_HW_CPU_CYCLES);
+        hardware_fds.l1d_cache_misses = open_cache_counter(pid, PERF_COUNT_HW_CACHE_L1D,
+                                                           PERF_COUNT_HW_CACHE_OP_READ,
+                                                           PERF_COUNT_HW_CACHE_RESULT_MISS);
+        hardware_fds.l1i_cache_misses = open_cache_counter(pid, PERF_COUNT_HW_CACHE_L1I,
+                                                           PERF_COUNT_HW_CACHE_OP_READ,
+                                                           PERF_COUNT_HW_CACHE_RESULT_MISS);
+        hardware_fds.llc_cache_misses = open_cache_counter(pid, PERF_COUNT_HW_CACHE_LL,
+                                                           PERF_COUNT_HW_CACHE_OP_READ,
+                                                           PERF_COUNT_HW_CACHE_RESULT_MISS);
+        hardware_fds.dtlb_cache_misses = open_cache_counter(pid, PERF_COUNT_HW_CACHE_DTLB,
+                                                            PERF_COUNT_HW_CACHE_OP_READ,
+                                                            PERF_COUNT_HW_CACHE_RESULT_MISS);
+        hardware_fds.itlb_cache_misses = open_cache_counter(pid, PERF_COUNT_HW_CACHE_ITLB,
+                                                            PERF_COUNT_HW_CACHE_OP_READ,
+                                                            PERF_COUNT_HW_CACHE_RESULT_MISS);
         char gate = 1;
         ssize_t released;
         do {
@@ -732,6 +787,11 @@ int main(int argc, char **argv) {
     long long cache_misses_hw = close_hardware_counter(hardware_fds.cache_misses);
     long long branch_misses_hw = close_hardware_counter(hardware_fds.branch_misses);
     long long cpu_cycles_hw = close_hardware_counter(hardware_fds.cpu_cycles);
+    long long l1d_cache_misses_hw = close_hardware_counter(hardware_fds.l1d_cache_misses);
+    long long l1i_cache_misses_hw = close_hardware_counter(hardware_fds.l1i_cache_misses);
+    long long llc_cache_misses_hw = close_hardware_counter(hardware_fds.llc_cache_misses);
+    long long dtlb_cache_misses_hw = close_hardware_counter(hardware_fds.dtlb_cache_misses);
+    long long itlb_cache_misses_hw = close_hardware_counter(hardware_fds.itlb_cache_misses);
 
     long long wall_ns = now_ns() - start;
 
@@ -762,10 +822,20 @@ int main(int argc, char **argv) {
     char cache_misses_hw_json[32];
     char branch_misses_hw_json[32];
     char cpu_cycles_hw_json[32];
+    char l1d_cache_misses_hw_json[32];
+    char l1i_cache_misses_hw_json[32];
+    char llc_cache_misses_hw_json[32];
+    char dtlb_cache_misses_hw_json[32];
+    char itlb_cache_misses_hw_json[32];
     snprintf(instructions_hw_json, sizeof instructions_hw_json, instructions_hw >= 0 ? "%lld" : "null", instructions_hw);
     snprintf(cache_misses_hw_json, sizeof cache_misses_hw_json, cache_misses_hw >= 0 ? "%lld" : "null", cache_misses_hw);
     snprintf(branch_misses_hw_json, sizeof branch_misses_hw_json, branch_misses_hw >= 0 ? "%lld" : "null", branch_misses_hw);
     snprintf(cpu_cycles_hw_json, sizeof cpu_cycles_hw_json, cpu_cycles_hw >= 0 ? "%lld" : "null", cpu_cycles_hw);
+    snprintf(l1d_cache_misses_hw_json, sizeof l1d_cache_misses_hw_json, l1d_cache_misses_hw >= 0 ? "%lld" : "null", l1d_cache_misses_hw);
+    snprintf(l1i_cache_misses_hw_json, sizeof l1i_cache_misses_hw_json, l1i_cache_misses_hw >= 0 ? "%lld" : "null", l1i_cache_misses_hw);
+    snprintf(llc_cache_misses_hw_json, sizeof llc_cache_misses_hw_json, llc_cache_misses_hw >= 0 ? "%lld" : "null", llc_cache_misses_hw);
+    snprintf(dtlb_cache_misses_hw_json, sizeof dtlb_cache_misses_hw_json, dtlb_cache_misses_hw >= 0 ? "%lld" : "null", dtlb_cache_misses_hw);
+    snprintf(itlb_cache_misses_hw_json, sizeof itlb_cache_misses_hw_json, itlb_cache_misses_hw >= 0 ? "%lld" : "null", itlb_cache_misses_hw);
 
     /* Emit the framed report on the runner's own stdout. This fd is untouched
        in the child, so a submission cannot forge or corrupt the framing. */
@@ -831,14 +901,19 @@ int main(int argc, char **argv) {
             "\"voluntary_context_switches\":%ld,\"involuntary_context_switches\":%ld,"
             "\"block_input_ops\":%ld,\"block_output_ops\":%ld,"
             "\"instructions_hw\":%s,\"cache_misses_hw\":%s,\"branch_misses_hw\":%s,"
-            "\"cpu_cycles_hw\":%s}\n",
+            "\"cpu_cycles_hw\":%s,"
+            "\"l1d_cache_misses_hw\":%s,\"l1i_cache_misses_hw\":%s,"
+            "\"llc_cache_misses_hw\":%s,\"dtlb_cache_misses_hw\":%s,"
+            "\"itlb_cache_misses_hw\":%s}\n",
             exit_status, signal_num,
             timed_out ? "true" : "false",
             output_truncated ? "true" : "false",
             artifact_too_large ? "true" : "false",
             peak_rss_bytes, wall_ns, out_bytes, err_bytes, user_cpu_ns, system_cpu_ns,
             ru.ru_minflt, ru.ru_majflt, ru.ru_nvcsw, ru.ru_nivcsw, ru.ru_inblock, ru.ru_oublock,
-            instructions_hw_json, cache_misses_hw_json, branch_misses_hw_json, cpu_cycles_hw_json);
+            instructions_hw_json, cache_misses_hw_json, branch_misses_hw_json, cpu_cycles_hw_json,
+            l1d_cache_misses_hw_json, l1i_cache_misses_hw_json, llc_cache_misses_hw_json,
+            dtlb_cache_misses_hw_json, itlb_cache_misses_hw_json);
     fflush(report);
 
     free(out_cap.data);

@@ -9,6 +9,7 @@ pub mod experiment;
 pub mod init;
 pub mod matrix;
 pub mod measure;
+pub mod pareto;
 pub mod profiles;
 pub mod replay;
 pub mod run;

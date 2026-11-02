@@ -567,6 +567,19 @@ pub fn run(
             "this harness-0.12.0 capsule predates reference executable digests; paired timing is replayed without a reference binary identity check".into(),
         );
     }
+    if let Some(canary) = &recorded.noise_canary {
+        match canary.status.as_str() {
+            "drifted" => report.environment_notes.push(format!(
+                "the original measurement's host-noise canary drifted {:.4}% ({} tolerance); its indicative numbers may not be trustworthy",
+                canary.drift_pct, canary.workload
+            )),
+            "unavailable" => report.environment_notes.push(format!(
+                "the original measurement recorded no host-noise canary ({})",
+                canary.note.as_deref().unwrap_or("no reason recorded")
+            )),
+            _ => {}
+        }
+    }
 
     cmd::emit(
         format,

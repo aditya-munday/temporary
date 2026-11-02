@@ -3,8 +3,9 @@
 Working directory: `/workspace/project`
 Remote: `https://github.com/aditya-munday/CodeCurrency-Runtime.git`
   (renamed from `CodeCurrency`; old URLs redirect)
-Active branch: `codex/phase1-engine` (the real engine; `main` holds only an
-  early scaffold until PR #1 merges)
+Active branch: `phase1/high-level-stats-clean` (PR #3: tie groups, Pareto
+  frontier, cache-hierarchy/TLB counters, and the host-noise canary). The engine
+  merged to `main` as PR #1 (commit `f5fb476`).
 Source idea document: `/workspace/project/PLATFORM_IDEA.txt`
 Task list for the current phase: `PHASE1_AGENT_PROMPT.txt` (untracked)
 GitHub CLI: authenticated as `aditya-munday` (scopes: gist, read:org, repo, workflow)
@@ -249,8 +250,23 @@ scaffold emits a `.file` directive so the object is byte-identical across clean
 builds. Per-language coverage is published in `docs/LANGUAGES.md` and by
 `ccx profiles` (aliases `ccx languages`, `ccx platforms`).
 
-Capsules are at **schema 16** (schema 15 added raw repeatability observations;
-schema 16 adds the optional `applied_tolerance` field). See `CAPSULE_SPEC.md`.
+Capsules are at **schema 17** (schema 15 added raw repeatability observations;
+schema 16 adds the optional `applied_tolerance` field; schema 17 adds the
+optional `noise_canary` field). See `CAPSULE_SPEC.md`.
+
+### Host-noise canary
+
+`ccx measure` runs a fixed C workload (`docker/harness/noise_canary.c`, id
+`ccx-canary-v1`) once before and once after the solution's own runs, and records
+the drift in the capsule's `noise_canary` field (`stable` / `drifted` /
+`unavailable`). It is advisory: it never changes a metric or a verdict, and a
+canary that cannot run is recorded as `unavailable` with a reason. `ccx replay`
+surfaces a `drifted` or `unavailable` canary from the original measurement as a
+note. Adding `noise_canary.c` to `docker/harness/` does **not** change the
+harness fingerprint — `scripts/pin-toolchains.sh` hashes only `runner.c`,
+`batch_runner.c`, and `alloc_shim.c` plus the built binaries — so committed
+capsules stay valid. It is compiled on demand in the solution's image, so every
+image needs a C compiler (all three have one).
 
 ### Commands
 
@@ -258,8 +274,17 @@ schema 16 adds the optional `applied_tolerance` field). See `CAPSULE_SPEC.md`.
 - `ccx test` — run the arena solution against every size in `problem.json`.
 - `ccx measure --size S --seed N --repeat R` — produce a capsule.
 - `ccx replay <capsule.json>` — rebuild, re-measure, and compare to the capsule.
-- `ccx init`, `ccx asm`, `ccx diff`, `ccx matrix`, `ccx experiment`,
-  `ccx validate`, `ccx doctor` — see `ccx --help`.
+- `ccx init`, `ccx asm`, `ccx diff`, `ccx matrix`, `ccx pareto`,
+  `ccx experiment`, `ccx validate`, `ccx doctor` — see `ccx --help`.
+
+### Ranking and trade-offs
+
+- `ccx matrix` ranks rankable profiles into statistical tie groups
+  (`ccx_core::ranking::rank_groups`). Overlapping 95% intervals share a rank;
+  ties are transitive; ineligible profiles are excluded, not ranked last.
+- `ccx pareto` shows the multi-objective frontier over deterministic axes
+  (`ccx_core::ranking::pareto_frontier`). It refuses wall-clock or
+  hardware-counter axes: a frontier over a noise axis draws noise as structure.
 
 ### Layer 1: measurement truth (the trust layer)
 
@@ -323,6 +348,20 @@ Hard-won facts, each of which was a real bug:
    within each host, so this admits a per-host offset, not within-host noise.
    `ccx replay` applies the same recorded bound. See `CAPSULE_SPEC.md` §16 and
    `METHODOLOGY.md`.
+8. **Editing the runner invalidates every committed capsule.** The runner's
+   SHA-256 is folded into the toolchain `environment_fingerprint`, which is in
+   turn folded into the pinned image digest, and `Capsule::same_environment()`
+   compares that fingerprint on replay. So a one-line change to `runner.c` (for
+   example adding the cache-hierarchy and TLB counters in C1) changes the
+   fingerprint, and every capsule recorded under the old runner fails replay's
+   environment check with `the pinned toolchain environment fingerprint differs
+   from the capsule`. The container-engine CI job runs
+   `ccx replay evidence/sorted-pair-sum-great.json`, so the whole job goes red.
+   Fix: after any runner change, rerun `scripts/pin-toolchains.sh` and
+   re-measure every committed evidence capsule on the pinned image; the
+   deterministic counters are unchanged, only the indicative timing moves.
+   `scripts/compare-capsules.py` enforces the lock/capsule fingerprint match in
+   CI, so the lock and the capsules must move together.
 
 ### Known-honest results (not bugs)
 
@@ -341,7 +380,7 @@ Hard-won facts, each of which was a real bug:
 
 - `cargo fmt --all -- --check`: clean.
 - `cargo clippy --workspace --all-targets -- -D warnings`: clean.
-- `cargo test --workspace`: 184 tests pass (126 core + 58 CLI), 1 ignored.
+- `cargo test --workspace`: 200 tests pass (139 core + 61 CLI), 1 ignored.
 - `python3 -m unittest scripts/test_compare_capsules.py`: 22 tests pass.
 - `ccx measure` on the naive solution: all metrics present and correctly
   labelled.

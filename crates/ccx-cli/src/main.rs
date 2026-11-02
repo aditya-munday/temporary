@@ -225,6 +225,15 @@ pub enum Command {
         /// Comparison capsule (the "after").
         b: PathBuf,
     },
+    /// Show the Pareto frontier over deterministic metrics across capsules.
+    Pareto {
+        /// Capsules to compare (two or more).
+        capsules: Vec<PathBuf>,
+        /// Axis to plot; repeatable. Defaults to instructions, peak_memory,
+        /// binary_size. Every axis must be a deterministic metric.
+        #[arg(long = "axis")]
+        axes: Vec<String>,
+    },
     /// Re-run a capsule and report whether it matches.
     Replay {
         /// Capsule to replay.
@@ -368,6 +377,7 @@ fn run(cli: &Cli) -> anyhow::Result<()> {
         ),
         Command::Asm { dir } => cmd::asm::run(cli.format, dir),
         Command::Diff { a, b } => cmd::diff::run(cli.format, a, b),
+        Command::Pareto { capsules, axes } => cmd::pareto::run(cli.format, capsules, axes),
         Command::Replay {
             capsule,
             dir,

@@ -132,6 +132,16 @@ impl RunOutcome {
             branch_misses_hw: Option<u64>,
             #[serde(default)]
             cpu_cycles_hw: Option<u64>,
+            #[serde(default)]
+            l1d_cache_misses_hw: Option<u64>,
+            #[serde(default)]
+            l1i_cache_misses_hw: Option<u64>,
+            #[serde(default)]
+            llc_cache_misses_hw: Option<u64>,
+            #[serde(default)]
+            dtlb_cache_misses_hw: Option<u64>,
+            #[serde(default)]
+            itlb_cache_misses_hw: Option<u64>,
         }
         let raw: Raw = serde_json::from_str(text.trim()).ok()?;
         let has_resources = raw.user_cpu_ns.is_some()
@@ -168,12 +178,22 @@ impl RunOutcome {
             hardware: (raw.instructions_hw.is_some()
                 || raw.cache_misses_hw.is_some()
                 || raw.branch_misses_hw.is_some()
-                || raw.cpu_cycles_hw.is_some())
+                || raw.cpu_cycles_hw.is_some()
+                || raw.l1d_cache_misses_hw.is_some()
+                || raw.l1i_cache_misses_hw.is_some()
+                || raw.llc_cache_misses_hw.is_some()
+                || raw.dtlb_cache_misses_hw.is_some()
+                || raw.itlb_cache_misses_hw.is_some())
             .then_some(HardwareCounters {
                 instructions: raw.instructions_hw,
                 cache_misses: raw.cache_misses_hw,
                 branch_misses: raw.branch_misses_hw,
                 cpu_cycles: raw.cpu_cycles_hw,
+                l1d_cache_misses: raw.l1d_cache_misses_hw,
+                l1i_cache_misses: raw.l1i_cache_misses_hw,
+                llc_cache_misses: raw.llc_cache_misses_hw,
+                dtlb_cache_misses: raw.dtlb_cache_misses_hw,
+                itlb_cache_misses: raw.itlb_cache_misses_hw,
             }),
         })
     }
@@ -281,6 +301,16 @@ pub struct HardwareCounters {
     pub cache_misses: Option<u64>,
     pub branch_misses: Option<u64>,
     pub cpu_cycles: Option<u64>,
+    #[serde(default)]
+    pub l1d_cache_misses: Option<u64>,
+    #[serde(default)]
+    pub l1i_cache_misses: Option<u64>,
+    #[serde(default)]
+    pub llc_cache_misses: Option<u64>,
+    #[serde(default)]
+    pub dtlb_cache_misses: Option<u64>,
+    #[serde(default)]
+    pub itlb_cache_misses: Option<u64>,
 }
 
 impl AllocationCounts {
@@ -398,6 +428,11 @@ impl Measurement {
                 ("cache_misses_hw", h.cache_misses),
                 ("branch_misses_hw", h.branch_misses),
                 ("cpu_cycles_hw", h.cpu_cycles),
+                ("l1d_cache_misses_hw", h.l1d_cache_misses),
+                ("l1i_cache_misses_hw", h.l1i_cache_misses),
+                ("llc_cache_misses_hw", h.llc_cache_misses),
+                ("dtlb_cache_misses_hw", h.dtlb_cache_misses),
+                ("itlb_cache_misses_hw", h.itlb_cache_misses),
             ] {
                 if let Some(value) = value {
                     metrics.push(Metric::count(
@@ -504,6 +539,7 @@ impl Measurement {
             verdict: Verdict::Accepted,
             metrics: self.to_metrics(),
             applied_tolerance: None,
+            noise_canary: None,
             repeatability: None,
             build_repeatability: None,
         }
@@ -759,6 +795,33 @@ mod tests {
         assert_eq!(hardware.cache_misses, Some(5));
         assert_eq!(hardware.branch_misses, Some(2));
         assert_eq!(hardware.cpu_cycles, Some(1000));
+        // A capsule written by an older harness has no cache-hierarchy fields;
+        // they default to absent rather than to zero.
+        assert_eq!(hardware.l1d_cache_misses, None);
+        assert_eq!(hardware.llc_cache_misses, None);
+    }
+
+    #[test]
+    fn runner_json_parses_cache_hierarchy_counters() {
+        let line = r#"{"exit_status":0,"signal":0,"timed_out":false,"output_truncated":false,"peak_rss_bytes":1024,"wall_ns":2000,"stdout_bytes":0,"stderr_bytes":0,"instructions_hw":1010,"cache_misses_hw":5,"branch_misses_hw":2,"cpu_cycles_hw":1000,"l1d_cache_misses_hw":40,"l1i_cache_misses_hw":3,"llc_cache_misses_hw":7,"dtlb_cache_misses_hw":11,"itlb_cache_misses_hw":1}"#;
+        let outcome = RunOutcome::from_runner_json(line).unwrap();
+        let hardware = outcome.hardware.unwrap();
+        assert_eq!(hardware.l1d_cache_misses, Some(40));
+        assert_eq!(hardware.l1i_cache_misses, Some(3));
+        assert_eq!(hardware.llc_cache_misses, Some(7));
+        assert_eq!(hardware.dtlb_cache_misses, Some(11));
+        assert_eq!(hardware.itlb_cache_misses, Some(1));
+    }
+
+    #[test]
+    fn a_lone_cache_counter_is_still_a_hardware_measurement() {
+        // A host can expose LLC but not, say, L1d. The presence of any one
+        // counter must produce a hardware measurement, not silently drop it.
+        let line = r#"{"exit_status":0,"signal":0,"timed_out":false,"output_truncated":false,"peak_rss_bytes":1024,"wall_ns":2000,"stdout_bytes":0,"stderr_bytes":0,"llc_cache_misses_hw":7}"#;
+        let outcome = RunOutcome::from_runner_json(line).unwrap();
+        let hardware = outcome.hardware.unwrap();
+        assert_eq!(hardware.llc_cache_misses, Some(7));
+        assert_eq!(hardware.instructions, None);
     }
 
     #[test]
@@ -958,6 +1021,11 @@ mod tests {
                 cache_misses: Some(5),
                 branch_misses: Some(2),
                 cpu_cycles: Some(500),
+                l1d_cache_misses: Some(40),
+                l1i_cache_misses: Some(3),
+                llc_cache_misses: Some(7),
+                dtlb_cache_misses: Some(11),
+                itlb_cache_misses: Some(1),
             }),
         };
         let metrics = m.to_metrics();
@@ -968,7 +1036,16 @@ mod tests {
             .unwrap();
         assert_eq!(sim.kind, MetricKind::Simulated);
         assert_eq!(hw.kind, MetricKind::Measured);
-        for name in ["cache_misses_hw", "branch_misses_hw", "cpu_cycles_hw"] {
+        for name in [
+            "cache_misses_hw",
+            "branch_misses_hw",
+            "cpu_cycles_hw",
+            "l1d_cache_misses_hw",
+            "l1i_cache_misses_hw",
+            "llc_cache_misses_hw",
+            "dtlb_cache_misses_hw",
+            "itlb_cache_misses_hw",
+        ] {
             let metric = metrics.iter().find(|metric| metric.name == name).unwrap();
             assert_eq!(metric.kind, MetricKind::Measured);
             assert_eq!(metric.method, MetricMethod::Perf);

@@ -1,12 +1,12 @@
 # Performance finding: pair counting
 
-## Current schema-15 result
+## Current schema-16 result
 
 This is the current replayable comparison. It supersedes the older schema-14
-numbers preserved below. The [naive capsule](evidence/sorted-pair-sum-naive-v0.19.json)
+and schema-15 numbers preserved below. The [naive capsule](evidence/sorted-pair-sum-naive-v0.19.json)
 and [sort-and-two-pointers capsule](evidence/sorted-pair-sum-good-v0.19.json)
 were measured with harness `0.19.0`, GCC `14.2.0`, `-O2`, and the pinned
-`ccx-gcc` image (`sha256:3778d4d751b6d2fc95c0df2dd9968903d5889ee4db60a3ad2b7a95db06bf2120`).
+`ccx-gcc` image (`sha256:1675b1172f35a5012533efd1f2c44f06340f78cc99e448734b5ddc54bebdad1f`).
 Both use the same problem, public seed `1`, size `naive` (800 values), generated
 stdin SHA-256, host fingerprint, and measurement ruleset. Each capsule contains
 twenty ordered same-binary execution samples and three clean-build samples.
@@ -25,7 +25,7 @@ are identical across all twenty repetitions in each capsule.
 | Allocations | 4 | 4 | 0% | measured, Valgrind Memcheck |
 | Allocated bytes | 88,320 | 88,320 | 0% | measured, Valgrind Memcheck |
 | Binary size | 16,560 B | 16,904 B | +2.08% | measured, filesystem stat |
-| Execution wall time | 2.880 ms ± 0.658 ms | 1.854 ms ± 0.293 ms | within noise | indicative, capsule CI95 |
+| Execution wall time | 2.248 ms ± 0.092 ms | 2.068 ms ± 0.053 ms | within noise | indicative, capsule CI95 |
 
 The algorithm change cuts the deterministic instruction count by about half by
 sorting once and then advancing two pointers, instead of visiting every pair.
@@ -58,20 +58,67 @@ target/release/ccx diff evidence/sorted-pair-sum-naive-v0.19.json evidence/sorte
 ```
 
 Both replay reports must show `reproduced: true` and
-`deterministic_match: true`. Both do. The naive replay also matched its
-machine-dependent intervals. The good replay did not: wall time, reference
-wall time, and build user CPU time fell outside their recorded intervals, so
-its `machine_dependent_match` is false. Its deterministic counters and measured
-allocation and binary-size metrics still matched exactly. This is an observed
-limit of replaying timing data on a noisy WSL2 host, not a deterministic-counter
-mismatch. The capsule IDs are
-`59f9ff2415a22859147fc0939c355c8d6b1a06d6e8af0fe8f99997ee6d3c867a` and
-`7023057ed0bde7f7b2b8fc29f48cb8e80f223186efeb3675111a02e72da7ea86`.
+`deterministic_match: true`. Both do, and both also matched their
+machine-dependent intervals on this host. The deterministic counters and the
+measured allocation and binary-size metrics matched exactly. The capsule IDs
+are
+`ee6c69bb2513c127f53cd253f3334792603aa6c7d59ee4ee12152b17799610a7` and
+`15ff3f62051a55c54d55155cccfafa56642f91db5eeb2a2f1b9c676608c24abe`.
+
+#### A third approach: counting by value
+
+The [great source](arena/great/main.cpp) uses the problem's value bound
+`0 <= a[i] <= 2n` to count frequencies and build a prefix sum instead of
+sorting. Its schema-16, harness-0.19.0 capsule is
+[available here](evidence/sorted-pair-sum-great.json). It uses the exact same
+public seed `1`, size `naive` (800 values), stdin SHA-256, GCC 14.2.0 image, and
+host as the naive and good capsules above. It records twenty samples, three
+byte-identical builds, and its measurement report marked instructions eligible
+with 0.00% spread. The capsule ID is
+`e37a2914761dadd2726e05ddca27ae8d2234b07668810358d17369c3cd6b98b2`.
+
+| Metric | Sort and two pointers | Count and prefix sum | Change |
+| --- | ---: | ---: | ---: |
+| Instructions | 2,506,969 | 2,480,374 | −1.06% |
+| Memory references | 3,409,423 | 3,375,295 | −1.00% |
+| Branches | 407,255 | 402,480 | −1.17% |
+| Branch misses | 18,868 | 15,782 | −16.36% |
+| Cache misses | 17,708 | 18,239 | +3.00% |
+| Allocations | 4 | 6 | +50% |
+| Allocated bytes | 88,320 | 113,904 | +28.97% |
+| Binary size | 16,904 B | 16,672 B | −1.37% |
+
+The deterministic counters show a small instruction reduction and fewer branch
+misses, alongside more cache misses and allocation traffic. The source-mapped
+assembly identifies the frequency fill and prefix passes at
+[`main.cpp:27`](arena/great/main.cpp#L27) and
+[`main.cpp:34`](arena/great/main.cpp#L34); the quadratic pair loop is absent.
+On this small input, the extra frequency and prefix storage consumes much of
+the asymptotic advantage. This is evidence for choosing an algorithm based on
+the input bounds and scale, not evidence that counting is always faster.
+
+The Great candidate's wall-clock median was `1.956 ms ± 0.077 ms`; the good
+candidate measured `2.068 ms ± 0.053 ms`. The confidence intervals overlap,
+and `ccx diff` classifies the paired-ratio change as `within_noise`, so this
+does not establish a wall-clock winner. The instruction and branch counters
+are the supported deterministic comparison for this result.
+
+The saved capsule replayed on its recording host with both
+`deterministic_match: true` and `machine_dependent_match: true`. Reproduce the
+measurement, replay, and diff with:
+
+```sh
+target/release/ccx measure --dir arena/great --size naive --seed 1 --repeat 20 \
+  --out evidence/sorted-pair-sum-great.json
+target/release/ccx replay evidence/sorted-pair-sum-great.json --dir arena/great
+target/release/ccx diff evidence/sorted-pair-sum-good-v0.19.json \
+  evidence/sorted-pair-sum-great.json
+```
 
 ## Archived schema-14 and harness-0.18 record
 
 The following report records earlier runs. Its values and capsule IDs are kept
-as historical evidence; use the schema-15 capsules above for the current
+as historical evidence; use the schema-16 capsules above for the current
 pair-counting comparison.
 
 ### Earlier pair-counting run
@@ -201,54 +248,4 @@ target/release/ccx measure --dir arena/good --size naive --seed 1 --repeat 20 --
 target/release/ccx replay arena/naive/reproduced.json
 target/release/ccx replay arena/good/reproduced.json
 target/release/ccx diff arena/naive/reproduced.json arena/good/reproduced.json
-```
-
-#### A third approach: counting by value
-
-The [great source](arena/great/main.cpp) uses the problem's value bound
-`0 <= a[i] <= 2n` to count frequencies and build a prefix sum instead of
-sorting. Its schema-14, harness-0.18.0 capsule is
-[available here](evidence/sorted-pair-sum-great.json). It uses the exact same
-public seed `1`, size `800`, stdin SHA-256, GCC 14.2.0 image, and host as the
-naive and good capsules above. It records twenty samples, three byte-identical
-builds, and its measurement report marked instructions eligible with 0.00%
-spread. The capsule ID is
-`ee42b45f21990ff8e2abefd943b6ef6c86a31d8732bd84512c678e586cfa102a`.
-
-| Metric | Sort and two pointers | Count and prefix sum | Change |
-| --- | ---: | ---: | ---: |
-| Instructions | 2,506,969 | 2,480,374 | −1.06% |
-| Memory references | 3,409,423 | 3,375,295 | −1.00% |
-| Branches | 407,255 | 402,480 | −1.17% |
-| Branch misses | 18,868 | 15,782 | −16.36% |
-| Cache misses | 17,708 | 18,239 | +3.00% |
-| Allocations | 4 | 6 | +50% |
-| Allocated bytes | 88,320 | 113,904 | +28.97% |
-| Binary size | 16,904 B | 16,672 B | −1.37% |
-
-The deterministic counters show a small instruction reduction and fewer branch
-misses, alongside more cache misses and allocation traffic. The source-mapped
-assembly identifies the frequency fill and prefix passes at
-[`main.cpp:27`](arena/great/main.cpp#L27) and
-[`main.cpp:34`](arena/great/main.cpp#L34); the quadratic pair loop is absent.
-On this small input, the extra frequency and prefix storage consumes much of
-the asymptotic advantage. This is evidence for choosing an algorithm based on
-the input bounds and scale, not evidence that counting is always faster.
-
-The Great candidate's wall-clock median was `1.793 ms ± 0.263 ms`; the good
-candidate measured `1.904 ms ± 0.441 ms`. The confidence intervals overlap,
-and `ccx diff` classifies the paired-ratio change as `within_noise`, so this
-does not establish a wall-clock winner. The instruction and branch counters
-are the supported deterministic comparison for this result.
-
-The saved capsule replayed on its recording host with both
-`deterministic_match: true` and `machine_dependent_match: true`. Reproduce the
-measurement, replay, and diff with:
-
-```sh
-target/release/ccx measure --dir arena/great --size naive --seed 1 --repeat 20 \
-  --out evidence/sorted-pair-sum-great.json
-target/release/ccx replay evidence/sorted-pair-sum-great.json --dir arena/great
-target/release/ccx diff arena/good/capsule.phase1.v0.18.json \
-  evidence/sorted-pair-sum-great.json
 ```

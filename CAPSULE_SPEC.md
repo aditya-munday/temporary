@@ -1,4 +1,4 @@
-# CAPSULE_SPEC.md — Experiment Capsule, version 16
+# CAPSULE_SPEC.md — Experiment Capsule, version 17
 
 A **capsule** is the unit of evidence on CodeCurrency. It is a small, versioned
 JSON document that fully describes one measured run of one solution to one
@@ -26,7 +26,7 @@ Design rules:
 
 ```jsonc
 {
-  "schema_version": 16,         // integer, bumped only with a migration
+  "schema_version": 17,         // integer, bumped only with a migration
   "capsule_id": "…",            // sha256 of the canonical body (see §10)
   "created_at": "2026-10-26T11:00:00Z",  // RFC 3339, UTC
   "problem":   { … },           // §2
@@ -41,7 +41,8 @@ Design rules:
   "metrics":   [ … ],           // §12
   "repeatability": { … },       // §13, optional
   "build_repeatability": { … }, // §14, optional
-  "applied_tolerance": { … }    // §17, optional
+  "applied_tolerance": { … },   // §16, optional
+  "noise_canary": { … }         // §17, optional
 }
 ```
 
@@ -206,6 +207,8 @@ Phase 1 metric set:
 | `cache_misses_hw` | count | measured when available | perf |
 | `branch_misses_hw` | count | measured when available | perf |
 | `cpu_cycles_hw` | count | measured when available | perf |
+| `l1d_cache_misses_hw`, `l1i_cache_misses_hw`, `llc_cache_misses_hw` | count | measured when available | perf |
+| `dtlb_cache_misses_hw`, `itlb_cache_misses_hw` | count | measured when available | perf |
 | `ipc_hw` | instructions/cycle | measured when available | perf |
 | `average_cpu_frequency_hw` | hertz | measured when available | perf + getrusage |
 | `branch_misses` | count | simulated | cachegrind |
@@ -403,7 +406,53 @@ Rules:
   capsule replayed on a different CPU model is not reported as a lie.
 - Measured metrics and profiles without a policy still require exact agreement.
 
-## 17. Migration policy
+## 17. `noise_canary`
+
+Optional. Records the result of a fixed host-noise canary measured immediately
+before and after the solution's own runs. The canary is a small, self-contained
+C workload (`docker/harness/noise_canary.c`, identified by
+`workload: "ccx-canary-v1"`) that allocates and touches a fixed buffer and does
+a bounded amount of integer and floating-point work. Its source and its work
+never change, so any drift between its two runs is a property of the host — a
+busy neighbour, a frequency-policy change, a machine that throttled mid-run —
+and not of the solution.
+
+The canary is **advisory**. It never changes a metric, never changes a verdict,
+and never fails a measurement: a canary that cannot run is recorded as
+`unavailable` with a reason. Its only purpose is to tell a reader whether the
+capsule's indicative numbers (wall clock, CPU time, RSS) were taken on a quiet
+host.
+
+```jsonc
+{
+  "workload": "ccx-canary-v1",   // stable id of the fixed workload
+  "before_wall_ns": 27000000.0,  // canary wall clock before the solution's runs
+  "after_wall_ns": 27500000.0,   // canary wall clock after the solution's runs
+  "drift_pct": 1.85,             // relative drift between the two, in percent
+  "tolerance_pct": 20.0,         // drift bound the status was judged against
+  "status": "stable",            // "stable" | "drifted" | "unavailable"
+  "note": "…"                    // present only when status is "unavailable"
+}
+```
+
+Rules:
+
+- `workload` is a non-empty identifier of the fixed workload.
+- `before_wall_ns` and `after_wall_ns` are non-negative, finite nanosecond
+  samples; `drift_pct` and `tolerance_pct` are non-negative and finite.
+- `drift_pct` must equal the relative drift of the two samples, and `status`
+  must follow from it: `stable` when the drift is within `tolerance_pct`,
+  `drifted` otherwise. A capsule whose status disagrees with its own numbers is
+  rejected, so the label can never be hand-waved onto a bad measurement.
+- `status: "unavailable"` must carry a `note` explaining why the canary could
+  not run, and records zeroed samples. The default tolerance is 20%, deliberately
+  generous: the canary catches gross drift, not micro-noise, so it does not
+  become a second, hidden flake source.
+- `ccx replay` surfaces a `drifted` or `unavailable` canary from the original
+  measurement as a note, so a reader is warned before trusting indicative
+  numbers.
+
+## 18. Migration policy
 
 - Adding an optional field with a safe default: keep the version, note it in the
   changelog. Readers must tolerate unknown *optional* additions only where the
@@ -434,6 +483,7 @@ adds a safe default. "Set version" means the step only bumps the integer.
 | 13 | 14 | candidate build count and clean-build timing spread | one honest build; legacy build-time intervals are removed and kept as single values |
 | 14 | 15 | raw execution and build repeatability observations | summaries are retained without fabricated raw samples |
 | 15 | 16 | optional `applied_tolerance` | the field is simply absent |
+| 16 | 17 | optional `noise_canary` | the field is simply absent |
 
 Original fields keep their meaning across every step. A capsule is never
 silently rewritten on disk by a migration; migration output is written to a new

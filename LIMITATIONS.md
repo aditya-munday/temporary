@@ -120,6 +120,14 @@ known gaps in the expanded Phase 1 target:
   a same-language ranking signal. Wall-clock remains indicative and noisy; the
   compiler matrix compares selected pinned profiles on one host and input and
   does not produce a cross-host ranking.
+- The host-noise canary detects gross drift between two runs of one fixed
+  workload on the same host; it does not measure per-metric noise, does not see
+  contention that starts and ends entirely between its two runs, and cannot
+  certify that a quiet host was fast rather than slow. A `stable` canary means
+  the host did not change much during the measurement, not that the indicative
+  numbers are precise. The canary is advisory and never affects a metric or a
+  verdict; its 20% tolerance is deliberately loose, so a small real drift can go
+  unreported.
 - C, C++, and Rust allocation counts use a separate Valgrind Memcheck xtree
   pass for the main process and its threads. Allocations in forked or exec'd
   child processes are not aggregated, so these metrics are not process-tree

@@ -3,6 +3,7 @@ use crate::context::{BuildSystem, CmakeGenerator, Solution};
 use crate::Format;
 use ccx_core::capsule::repeatability::RankingEligibility;
 use ccx_core::capsule::{Language, ToolchainName};
+use ccx_core::ranking::{rank_groups, RankEntry};
 use ccx_core::toolchain::pinned;
 use serde::Serialize;
 use std::path::{Path, PathBuf};
@@ -15,6 +16,18 @@ pub struct MatrixReport {
     pub input_sha256: String,
     pub profiles: Vec<MatrixProfile>,
     pub comparisons: Vec<MatrixComparison>,
+    /// Statistical tie groups over the rankable profiles' ranked metric.
+    /// Profiles whose repeatability is ineligible are excluded, not silently
+    /// ranked last.
+    pub tie_groups: Vec<MatrixTieGroup>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct MatrixTieGroup {
+    pub rank: u32,
+    /// The `toolchain`/`opt_level` label of each member, in display order.
+    pub members: Vec<String>,
+    pub is_tie: bool,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -187,6 +200,7 @@ pub fn run(
     }
 
     let comparisons = compare_profiles(&profiles);
+    let tie_groups = compute_tie_groups(&profiles);
     let report = MatrixReport {
         problem: solution.problem.meta.id.clone(),
         size: size.to_string(),
@@ -194,6 +208,7 @@ pub fn run(
         input_sha256: matrix_input_sha256.unwrap_or_default(),
         profiles,
         comparisons,
+        tie_groups,
     };
 
     cmd::emit(
@@ -267,6 +282,18 @@ pub fn run(
                         comparison.profile_a, comparison.profile_b, comparison.result
                     );
                 }
+            }
+            if !report.tie_groups.is_empty() {
+                println!("\n  statistical tie groups (ranked metric; intervals overlapping)");
+                for group in &report.tie_groups {
+                    let marker = if group.is_tie { "=" } else { " " };
+                    println!(
+                        "    rank {} {marker} {}",
+                        group.rank,
+                        group.members.join(", ")
+                    );
+                }
+                println!("    (= marks profiles whose intervals overlap: a tie, not a loss)");
             }
             println!("\n  Each capsule includes the full metric set and repeatability intervals.");
         },
@@ -550,6 +577,33 @@ fn resolve_output_dir(solution_root: &Path, requested: Option<&Path>) -> PathBuf
     }
 }
 
+fn compute_tie_groups(profiles: &[MatrixProfile]) -> Vec<MatrixTieGroup> {
+    // Only rankable profiles with a ranked value enter the ranking. An
+    // ineligible profile is reported as ineligible elsewhere, not ranked last.
+    let entries: Vec<RankEntry> = profiles
+        .iter()
+        .filter(|profile| profile.rankability.eligible && profile.ranked_value.is_some())
+        .map(|profile| RankEntry {
+            label: profile_label(profile),
+            value: profile.ranked_value.unwrap_or(f64::INFINITY),
+            uncertainty: profile.ranked_uncertainty.map(f64::abs),
+            tie_break: None,
+        })
+        .collect();
+    rank_groups(&entries)
+        .into_iter()
+        .map(|group| MatrixTieGroup {
+            rank: group.rank,
+            is_tie: group.is_tie(),
+            members: group
+                .members
+                .iter()
+                .map(|&index| entries[index].label.clone())
+                .collect(),
+        })
+        .collect()
+}
+
 fn compare_profiles(profiles: &[MatrixProfile]) -> Vec<MatrixComparison> {
     let mut comparisons = Vec::new();
     for index_a in 0..profiles.len() {
@@ -605,8 +659,9 @@ fn profile_label(profile: &MatrixProfile) -> String {
 #[cfg(test)]
 mod tests {
     use super::{
-        compare_profiles, parse_toolchain, select_build_profiles, select_opt_levels,
-        toolchain_name, MatrixComparisonResult, MatrixProfile, RankingEligibility,
+        compare_profiles, compute_tie_groups, parse_toolchain, select_build_profiles,
+        select_opt_levels, toolchain_name, MatrixComparisonResult, MatrixProfile,
+        RankingEligibility,
     };
     use crate::context::{BuildSystem, CmakeGenerator};
     use ccx_core::capsule::{Language, ToolchainName};
@@ -800,5 +855,67 @@ mod tests {
             compare_profiles(&profiles)[0].result,
             MatrixComparisonResult::ProfileBLower
         );
+    }
+
+    fn profile(
+        toolchain: &str,
+        opt_level: &str,
+        value: f64,
+        uncertainty: f64,
+        eligible: bool,
+    ) -> MatrixProfile {
+        MatrixProfile {
+            toolchain: toolchain.into(),
+            compiler_version: "test".into(),
+            opt_level: opt_level.into(),
+            build_system: "direct".into(),
+            cmake_generator: None,
+            capsule_path: format!("{toolchain}.capsule.json"),
+            capsule_id: format!("{toolchain}-{opt_level}"),
+            input_sha256: "same-input".into(),
+            ranked_metric: "instructions".into(),
+            rankability: rankability(eligible),
+            ranked_value: Some(value),
+            ranked_uncertainty: Some(uncertainty),
+            metrics: Vec::new(),
+        }
+    }
+
+    #[test]
+    fn tie_groups_share_a_rank_when_intervals_overlap() {
+        let profiles = vec![
+            profile("gcc", "-O2", 100.0, 5.0, true),
+            profile("clang", "-O2", 103.0, 5.0, true),
+            profile("gcc", "-O3", 300.0, 1.0, true),
+        ];
+        let groups = compute_tie_groups(&profiles);
+        assert_eq!(groups.len(), 2);
+        assert_eq!(groups[0].rank, 1);
+        assert!(groups[0].is_tie);
+        assert_eq!(groups[0].members.len(), 2);
+        // Competition rank skips the consumed rank.
+        assert_eq!(groups[1].rank, 3);
+        assert!(!groups[1].is_tie);
+    }
+
+    #[test]
+    fn tie_groups_exclude_ineligible_profiles_rather_than_ranking_last() {
+        let profiles = vec![
+            profile("gcc", "-O2", 100.0, 1.0, true),
+            // Faster on paper, but its repeatability is ineligible.
+            profile("clang", "-O2", 10.0, 1.0, false),
+        ];
+        let groups = compute_tie_groups(&profiles);
+        assert_eq!(groups.len(), 1);
+        assert_eq!(groups[0].members, vec!["gcc -O2 direct".to_string()]);
+        assert!(groups
+            .iter()
+            .all(|group| !group.members.iter().any(|m| m.starts_with("clang"))));
+    }
+
+    #[test]
+    fn tie_groups_are_empty_without_rankable_profiles() {
+        let profiles = vec![profile("gcc", "-O2", 100.0, 1.0, false)];
+        assert!(compute_tie_groups(&profiles).is_empty());
     }
 }

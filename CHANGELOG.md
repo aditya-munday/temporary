@@ -2,6 +2,48 @@
 
 ## Unreleased
 
+- Add a host-noise canary. `ccx measure` now runs a fixed, self-contained C
+  workload (`ccx-canary-v1`) immediately before and after the solution's own
+  runs, records both wall clocks, the relative drift, the tolerance, and a
+  `stable` / `drifted` / `unavailable` status in the capsule's new
+  `noise_canary` field. The canary is advisory: it never changes a metric or a
+  verdict, and a canary that cannot run is recorded as `unavailable` with a
+  reason instead of failing the measurement. `ccx replay` surfaces a `drifted`
+  or `unavailable` canary from the original measurement as a note, and `ccx
+  measure` prints the status. This advances capsules to schema 17; v16 capsules
+  migrate by leaving the field absent.
+
+- Record the portable cache-hierarchy and TLB read-miss hardware counters:
+  `l1d_cache_misses_hw`, `l1i_cache_misses_hw`, `llc_cache_misses_hw`,
+  `dtlb_cache_misses_hw`, and `itlb_cache_misses_hw`. The runner opens them
+  through `PERF_TYPE_HW_CACHE` alongside the existing hardware events, the
+  engine parses them as optional `measured` metrics, and `ccx doctor` reports
+  them. They are absent, not zero, when the host or sandbox cannot open the
+  event, and they never replace the simulated Cachegrind counters. The generic
+  `perf` cache interface exposes no portable L2 event, so the LLC counter stands
+  in for the outermost cache level.
+- Regenerate the three published pair-counting evidence capsules (naive, sort
+  and two pointers, and count and prefix sum) for the refreshed runner. Opening
+  the new hardware events changes the runner binary, which changes the pinned
+  image digest and the toolchain environment fingerprint, so capsules recorded
+  under the previous runner no longer satisfy replay's environment check. The
+  deterministic Cachegrind, Memcheck, and binary-size metrics are byte-for-byte
+  unchanged; only the indicative wall-clock and build-time samples moved, and
+  all three capsules replay with `deterministic_match: true`.
+- Rank compiler profiles into statistical tie groups in `ccx matrix`. Two
+  profiles whose bootstrap intervals overlap share a rank; ties are transitive,
+  so a chain of overlapping intervals shares one rank rather than being split
+  into pairwise claims the intervals do not support. Profiles whose
+  repeatability is ineligible are excluded from the ranking, not ranked last.
+  The grouping is a library function (`ccx_core::ranking::rank_groups`) with
+  unit tests.
+- Add `ccx pareto`, a trade-off frontier across capsules over deterministic
+  metrics. It reports which capsules are dominated and which are on the
+  frontier, keeps a capsule missing an axis off the frontier instead of
+  treating it as infinitely bad, and refuses a wall-clock or hardware-counter
+  axis because a frontier over a noisy axis is a drawing of noise. The
+  dominance relation is a library function (`ccx_core::ranking::pareto_frontier`)
+  with unit tests.
 - Add x86-64 assembly as a selectable submission language (`language = "asm"`
   with the pinned GAS toolchain). Builds are static, use Linux syscalls
   directly, and need no libc. Build, test, measure, replay, and `ccx asm` all
@@ -15,7 +57,6 @@
   simulation, allocations, peak memory, binary size, compiler remarks, the
   assembly view, and a repeatability grade (`exact`, `bounded`, or `unranked`)
   with a reason for every gap.
-
 - Advance capsules to schema 16. A profile may declare a bounded
   `applied_tolerance` for a simulated metric that carries a small, reproducible
   per-host offset. The cross-machine gate relaxes exact equality only for the

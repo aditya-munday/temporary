@@ -16,8 +16,9 @@ use crate::Format;
 use ccx_core::capsule::repeatability::{ranking_eligibility, RankingEligibility};
 use ccx_core::capsule::{
     fixed_env_map, hash_source_files, Build, Capsule, Harness, InputSpec, Metric, MetricKind,
-    MetricMethod, ProblemRef, ReferenceBuild, Repeatability, SeedSet, SourceRef, Spread, Toolchain,
-    UncertaintyKind, Verdict, CURRENT_SCHEMA_VERSION, DEFAULT_BUILD_REPEAT, HARNESS_VERSION,
+    MetricMethod, NoiseCanary, ProblemRef, ReferenceBuild, Repeatability, SeedSet, SourceRef,
+    Spread, Toolchain, UncertaintyKind, Verdict, CURRENT_SCHEMA_VERSION, DEFAULT_BUILD_REPEAT,
+    HARNESS_VERSION, NOISE_CANARY_WORKLOAD,
 };
 use ccx_core::engine::Measurement;
 use ccx_core::explain::{self, Hint, Ruleset};
@@ -42,6 +43,10 @@ pub struct MeasureReport {
     pub runs: u32,
     pub repeatability: Option<Repeatability>,
     pub build_repeatability: Option<Repeatability>,
+    /// Host-noise canary result. Advisory: it never changes the metrics, only
+    /// whether a reader should trust the indicative numbers.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub noise_canary: Option<NoiseCanary>,
     pub metrics: Vec<MetricSummary>,
     pub hints: Vec<Hint>,
 }
@@ -161,6 +166,15 @@ pub fn measure_solution(
     // branch metrics had only one sample and no measured spread.
     let mut last_measurement: Option<Measurement> = None;
 
+    // Host-noise canary: measure a fixed workload immediately before and after
+    // the solution's own runs. The canary is advisory — a canary that cannot run
+    // is recorded as `unavailable`, never as a failed measurement, because the
+    // solution's deterministic metrics do not depend on it.
+    let canary_program = pipeline.build_noise_canary().ok();
+    let canary_before = canary_program
+        .as_ref()
+        .and_then(|canary| pipeline.run_noise_canary(canary, &policy).ok());
+
     for i in 0..runs {
         let (outcome, counts, reference_outcome) =
             pipeline.measure_once_paired(&program, &reference, &input, &policy, i % 2 == 0)?;
@@ -239,6 +253,30 @@ pub fn measure_solution(
             .fix("this is an engine bug")
             .into_error()
     })?;
+
+    // Close the noise canary: run the same fixed workload once more now that the
+    // solution's runs are done, and record the drift between the two runs.
+    let noise_canary = match (&canary_program, canary_before) {
+        (Some(canary), Some(before_ns)) => match pipeline.run_noise_canary(canary, &policy) {
+            Ok(after_ns) => Some(NoiseCanary::from_samples(
+                NOISE_CANARY_WORKLOAD,
+                before_ns as f64,
+                after_ns as f64,
+            )),
+            Err(error) => Some(NoiseCanary::unavailable(
+                NOISE_CANARY_WORKLOAD,
+                format!("the canary's second run failed: {error}"),
+            )),
+        },
+        (Some(_), None) => Some(NoiseCanary::unavailable(
+            NOISE_CANARY_WORKLOAD,
+            "the canary's first run failed",
+        )),
+        (None, _) => Some(NoiseCanary::unavailable(
+            NOISE_CANARY_WORKLOAD,
+            "the canary workload could not be built",
+        )),
+    };
 
     // A single run has no spread; recording the run count is more honest than
     // reporting a zero-width interval.
@@ -442,6 +480,7 @@ pub fn measure_solution(
         verdict: Verdict::Accepted,
         metrics,
         applied_tolerance,
+        noise_canary,
         repeatability,
         build_repeatability,
     };
@@ -487,6 +526,7 @@ pub fn measure_solution(
         runs,
         repeatability: capsule.repeatability.clone(),
         build_repeatability: capsule.build_repeatability.clone(),
+        noise_canary: capsule.noise_canary.clone(),
         metrics: capsule
             .metrics
             .iter()
@@ -547,6 +587,23 @@ pub fn emit_report(format: Format, problem: &str, report: &MeasureReport) -> any
                 );
             }
             println!("  runs      {}", report.runs);
+            if let Some(canary) = &report.noise_canary {
+                match canary.status.as_str() {
+                    "stable" => println!(
+                        "  canary    stable | {} drift {:.4}% <= {:.4}% tolerance",
+                        canary.workload, canary.drift_pct, canary.tolerance_pct
+                    ),
+                    "drifted" => println!(
+                        "  canary    DRIFTED | {} drift {:.4}% > {:.4}% tolerance: treat indicative numbers with care",
+                        canary.workload, canary.drift_pct, canary.tolerance_pct
+                    ),
+                    _ => println!(
+                        "  canary    unavailable | {} | {}",
+                        canary.workload,
+                        canary.note.as_deref().unwrap_or("no reason recorded")
+                    ),
+                }
+            }
             println!(
                 "  target    {} | {} {} | {} | {} CPUs | frequency policy {}",
                 report.execution_target,

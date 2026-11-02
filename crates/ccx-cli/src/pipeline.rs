@@ -693,6 +693,60 @@ impl<'a> Pipeline<'a> {
         })
     }
 
+    /// Build the fixed host-noise canary workload.
+    ///
+    /// The workload is a single self-contained C file compiled with the same
+    /// toolchain profile as the solution. It is deliberately small and
+    /// deterministic: it allocates and touches a few megabytes and burns a
+    /// bounded amount of CPU, so its wall clock reflects the host, not the
+    /// problem. Building it costs one container start; the caller runs the
+    /// resulting binary twice.
+    pub fn build_noise_canary(&self) -> anyhow::Result<Program> {
+        const CANARY_SOURCE: &str = include_str!("../../../docker/harness/noise_canary.c");
+        let dir = self.scratch_dir().join("canary");
+        std::fs::create_dir_all(&dir)?;
+        let source = dir.join("noise_canary.c");
+        std::fs::write(&source, CANARY_SOURCE)?;
+        let _ = self.build_artifact(
+            self.c_driver(),
+            &["-O2".to_string(), "-std=c17".to_string()],
+            &[source],
+            &dir,
+            "canary",
+            false,
+        )?;
+        Ok(Program {
+            host_dir: dir,
+            guest_binary: format!("{GUEST_PROG}/canary"),
+            args: vec![],
+            runtime_argv: None,
+            runtime_prefix: vec![],
+            prefix: vec![],
+        })
+    }
+
+    /// Run the noise canary once and return its wall clock in nanoseconds.
+    ///
+    /// The canary is a plain native run: its numbers are indicative by nature,
+    /// and it must never be confused with the solution's measured metrics.
+    pub fn run_noise_canary(
+        &self,
+        canary: &Program,
+        policy: &SandboxPolicy,
+    ) -> anyhow::Result<u64> {
+        let mut invocation = canary.clone();
+        invocation.args = vec![];
+        let outcome = self.run_program(&invocation, &[], policy, false)?;
+        if outcome.verdict(policy.memory_bytes) != ccx_core::capsule::Verdict::Accepted {
+            return Err(
+                Fixable::new("the host-noise canary did not complete cleanly")
+                    .fix("this is an engine bug: report it with the problem id")
+                    .into_error(),
+            );
+        }
+        Ok(outcome.wall_ns)
+    }
+
     /// Compile the problem's reference solution (`reference.cpp`).
     pub fn build_reference(&self) -> anyhow::Result<Program> {
         self.build_reference_with_argv().map(|(program, _)| program)
@@ -2026,5 +2080,16 @@ mod tests {
             program.command_argv(),
             vec!["env", "CCX_RUN=1", "/prog/sol", "--mode"]
         );
+    }
+
+    #[test]
+    fn noise_canary_source_is_embedded_and_self_contained() {
+        // The pipeline embeds this file at compile time; a broken path or a
+        // missing `main` would only surface inside a container, so guard it here.
+        let source = include_str!("../../../docker/harness/noise_canary.c");
+        assert!(source.contains("int main(void)"));
+        assert!(source.contains("malloc"));
+        assert!(source.contains("printf"));
+        assert!(!source.contains("#include \"/"));
     }
 }

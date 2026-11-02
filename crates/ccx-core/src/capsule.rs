@@ -13,12 +13,14 @@ pub mod migrate;
 pub mod repeatability;
 
 /// The schema version this build writes.
-pub const CURRENT_SCHEMA_VERSION: u32 = 16;
+pub const CURRENT_SCHEMA_VERSION: u32 = 17;
 pub const LEGACY_BINARY_DIGEST_UNAVAILABLE: &str = "unavailable_legacy";
 pub const DEFAULT_BUILD_REPEAT: u32 = 3;
 
 /// Measurement harness version, bumped when measurement behaviour changes.
 pub const HARNESS_VERSION: &str = "0.19.0";
+/// Stable identifier of the fixed host-noise canary workload.
+pub const NOISE_CANARY_WORKLOAD: &str = "ccx-canary-v1";
 
 /// Hostname forced on every measured container.
 ///
@@ -524,6 +526,92 @@ impl AppliedTolerance {
     }
 }
 
+/// Host-noise canary recorded alongside a measurement.
+///
+/// A fixed reference workload is measured immediately before and after the
+/// solution's own measurement. The workload and its input are identical both
+/// times, so any change in its wall clock is host noise — a busy neighbour, a
+/// frequency-policy change, or a machine that throttled mid-run — and not a
+/// property of the solution. The status is advisory: it never changes the
+/// solution's deterministic metrics and never fails a measurement, it only
+/// tells a reader whether to trust the *indicative* numbers in this capsule.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct NoiseCanary {
+    /// Stable identifier of the fixed workload, e.g. `ccx-canary-v1`.
+    pub workload: String,
+    /// The canary's own wall clock before the solution was measured, in ns.
+    pub before_wall_ns: f64,
+    /// The canary's own wall clock after the solution was measured, in ns.
+    pub after_wall_ns: f64,
+    /// Relative drift between the two canary runs, as a percentage.
+    pub drift_pct: f64,
+    /// The drift tolerance the status was judged against, as a percentage.
+    pub tolerance_pct: f64,
+    /// `stable`, `drifted`, or `unavailable` when the canary could not run.
+    pub status: String,
+    /// Why the canary is `unavailable`, when it could not run. Absent when the
+    /// canary ran.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub note: Option<String>,
+}
+
+impl NoiseCanary {
+    /// Default drift tolerance. Deliberately generous: the canary is meant to
+    /// catch gross drift (a runaway neighbour, a machine that throttled), not
+    /// ordinary run-to-run jitter, and a false flag would train readers to
+    /// ignore it.
+    pub const DEFAULT_TOLERANCE_PCT: f64 = 20.0;
+
+    /// Build a canary record from the two wall-clock samples. `before` and
+    /// `after` are the canary's own wall clocks in nanoseconds.
+    pub fn from_samples(workload: &str, before_wall_ns: f64, after_wall_ns: f64) -> Self {
+        let drift_pct = relative_drift_pct(before_wall_ns, after_wall_ns);
+        let status = if drift_pct > Self::DEFAULT_TOLERANCE_PCT {
+            "drifted"
+        } else {
+            "stable"
+        };
+        NoiseCanary {
+            workload: workload.to_string(),
+            before_wall_ns,
+            after_wall_ns,
+            drift_pct,
+            tolerance_pct: Self::DEFAULT_TOLERANCE_PCT,
+            status: status.to_string(),
+            note: None,
+        }
+    }
+
+    /// Record that the canary could not be run, with the reason kept honest.
+    pub fn unavailable(workload: &str, reason: impl Into<String>) -> Self {
+        NoiseCanary {
+            workload: workload.to_string(),
+            before_wall_ns: 0.0,
+            after_wall_ns: 0.0,
+            drift_pct: 0.0,
+            tolerance_pct: Self::DEFAULT_TOLERANCE_PCT,
+            status: "unavailable".to_string(),
+            note: Some(reason.into()),
+        }
+    }
+
+    /// True when the canary ran and found the host stable.
+    pub fn is_stable(&self) -> bool {
+        self.status == "stable"
+    }
+}
+
+/// Relative drift between two positive samples, as a percentage of their
+/// smaller value, so the result is symmetric in `before`/`after`.
+pub fn relative_drift_pct(before: f64, after: f64) -> f64 {
+    let smaller = before.abs().min(after.abs());
+    if smaller <= 0.0 {
+        return 0.0;
+    }
+    (before - after).abs() / smaller * 100.0
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Capsule {
@@ -544,6 +632,8 @@ pub struct Capsule {
     pub metrics: Vec<Metric>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub applied_tolerance: Option<AppliedTolerance>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub noise_canary: Option<NoiseCanary>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repeatability: Option<Repeatability>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -826,6 +916,51 @@ impl Capsule {
                 if metric.kind != MetricKind::Simulated {
                     return Err(CapsuleError::Invalid(format!(
                         "applied_tolerance covers non-simulated metric {name:?}"
+                    )));
+                }
+            }
+        }
+
+        if let Some(canary) = &self.noise_canary {
+            let known_status =
+                matches!(canary.status.as_str(), "stable" | "drifted" | "unavailable");
+            let finite = canary.before_wall_ns.is_finite()
+                && canary.after_wall_ns.is_finite()
+                && canary.drift_pct.is_finite()
+                && canary.tolerance_pct.is_finite();
+            let non_negative = canary.before_wall_ns >= 0.0
+                && canary.after_wall_ns >= 0.0
+                && canary.drift_pct >= 0.0
+                && canary.tolerance_pct >= 0.0;
+            if canary.workload.trim().is_empty() || !known_status || !finite || !non_negative {
+                return Err(CapsuleError::Invalid(
+                    "noise_canary has an unknown status or invalid samples".into(),
+                ));
+            }
+            if canary.status == "unavailable" && canary.note.is_none() {
+                return Err(CapsuleError::Invalid(
+                    "an unavailable noise_canary must record why".into(),
+                ));
+            }
+            // A recorded canary must be self-consistent: its drift is exactly
+            // the drift of its own two samples, and its status follows from
+            // that drift. Otherwise the status could disagree with the numbers.
+            let expected_drift = relative_drift_pct(canary.before_wall_ns, canary.after_wall_ns);
+            if (canary.drift_pct - expected_drift).abs() > 1e-9 {
+                return Err(CapsuleError::Invalid(
+                    "noise_canary drift does not match its own samples".into(),
+                ));
+            }
+            if canary.status != "unavailable" {
+                let expected_status = if canary.drift_pct > canary.tolerance_pct {
+                    "drifted"
+                } else {
+                    "stable"
+                };
+                if canary.status != expected_status {
+                    return Err(CapsuleError::Invalid(format!(
+                        "noise_canary status {:?} disagrees with its drift {:.4}%",
+                        canary.status, canary.drift_pct
                     )));
                 }
             }
@@ -1680,5 +1815,100 @@ mod tests {
         missing.metrics.retain(|metric| metric.name != "branches");
         missing.seal().unwrap();
         assert!(missing.validate().is_err());
+    }
+
+    #[test]
+    fn noise_canary_status_follows_its_own_drift() {
+        let stable = NoiseCanary::from_samples("ccx-canary-v1", 1_000_000.0, 1_050_000.0);
+        assert_eq!(stable.status, "stable");
+        assert!(stable.is_stable());
+        assert!((stable.drift_pct - 5.0).abs() < 1e-9);
+        assert!(stable.note.is_none());
+
+        let drifted = NoiseCanary::from_samples("ccx-canary-v1", 1_000_000.0, 2_000_000.0);
+        assert_eq!(drifted.status, "drifted");
+        assert!(!drifted.is_stable());
+        assert!((drifted.drift_pct - 100.0).abs() < 1e-9);
+    }
+
+    #[test]
+    fn noise_canary_drift_is_symmetric_in_its_samples() {
+        assert_eq!(
+            relative_drift_pct(1_000.0, 500.0),
+            relative_drift_pct(500.0, 1_000.0)
+        );
+        assert_eq!(relative_drift_pct(0.0, 500.0), 0.0);
+    }
+
+    #[test]
+    fn noise_canary_validation_rejects_inconsistent_records() {
+        let capsule =
+            Capsule::from_json(include_str!("../tests/fixtures/capsule-v15.json")).unwrap();
+        let with_canary = |canary: NoiseCanary| {
+            let mut candidate = capsule.clone();
+            candidate.noise_canary = Some(canary);
+            candidate.seal().unwrap();
+            candidate
+        };
+
+        // A well-formed, self-consistent canary is accepted.
+        let valid = with_canary(NoiseCanary::from_samples(
+            "ccx-canary-v1",
+            1_000_000.0,
+            1_100_000.0,
+        ));
+        assert!(valid.validate().is_ok(), "{:?}", valid.validate());
+
+        // A status that disagrees with the recorded drift is rejected.
+        assert!(with_canary(NoiseCanary {
+            workload: "ccx-canary-v1".into(),
+            before_wall_ns: 1_000_000.0,
+            after_wall_ns: 2_000_000.0,
+            drift_pct: 100.0,
+            tolerance_pct: 20.0,
+            status: "stable".into(),
+            note: None,
+        })
+        .validate()
+        .is_err());
+
+        // A drift that disagrees with the samples is rejected.
+        assert!(with_canary(NoiseCanary {
+            workload: "ccx-canary-v1".into(),
+            before_wall_ns: 1_000_000.0,
+            after_wall_ns: 1_000_000.0,
+            drift_pct: 50.0,
+            tolerance_pct: 20.0,
+            status: "drifted".into(),
+            note: None,
+        })
+        .validate()
+        .is_err());
+
+        // An unavailable canary without a reason is rejected.
+        assert!(with_canary(NoiseCanary {
+            workload: "ccx-canary-v1".into(),
+            before_wall_ns: 0.0,
+            after_wall_ns: 0.0,
+            drift_pct: 0.0,
+            tolerance_pct: 20.0,
+            status: "unavailable".into(),
+            note: None,
+        })
+        .validate()
+        .is_err());
+
+        // An unknown status is rejected.
+        assert!(with_canary(NoiseCanary {
+            workload: "ccx-canary-v1".into(),
+            before_wall_ns: 1.0,
+            after_wall_ns: 1.0,
+            drift_pct: 0.0,
+            tolerance_pct: 20.0,
+            status: "vibes".into(),
+            note: None,
+        })
+        .validate()
+        .is_err());
     }
 }

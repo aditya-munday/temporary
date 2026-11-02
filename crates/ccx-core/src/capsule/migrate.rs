@@ -4,18 +4,14 @@
 //! previous one. Old capsules stay readable forever; they are never silently
 //! rewritten on disk.
 //!
-//! There is only one schema version today, so `migrate_value` has no steps yet.
-//! The shape of a real migration is documented here so the first one is a
-//! fill-in-the-blank rather than a redesign:
+//! Each step below only adds a safe default. The shape of a migration is:
 //!
 //! ```ignore
-//! if from == 1 {
-//!     // v1 -> v2: `metrics` gained a mandatory `method` field.
-//!     for m in value["metrics"].as_array_mut().unwrap() {
-//!         m["method"] = json!("manual");
-//!     }
-//!     value["schema_version"] = json!(2);
-//!     from = 2;
+//! 16 => {
+//!     // v16 -> v17: `noise_canary` was introduced. Older capsules were
+//!     // recorded without a canary, so the field is simply absent.
+//!     value["schema_version"] = json!(17);
+//!     version = 17;
 //! }
 //! ```
 //!
@@ -129,6 +125,13 @@ pub fn migrate_value(value: Value, from: u32) -> Result<Value, CapsuleError> {
                 // never declared one, so the field is simply absent.
                 value["schema_version"] = serde_json::json!(16);
                 version = 16;
+            }
+            16 => {
+                // v16 -> v17: `noise_canary` was introduced. Older capsules were
+                // recorded without a canary, so the field is simply absent
+                // rather than fabricated.
+                value["schema_version"] = serde_json::json!(17);
+                version = 17;
             }
             _ => {
                 return Err(CapsuleError::Invalid(format!(
@@ -303,6 +306,15 @@ mod tests {
             migrate_value(serde_json::json!({"schema_version": 15, "metrics": []}), 15).unwrap();
         assert_eq!(migrated["schema_version"], CURRENT_SCHEMA_VERSION);
         assert!(migrated.get("applied_tolerance").is_none());
+        assert!(migrated.get("noise_canary").is_none());
+    }
+
+    #[test]
+    fn version_sixteen_migrates_without_a_noise_canary() {
+        let migrated =
+            migrate_value(serde_json::json!({"schema_version": 16, "metrics": []}), 16).unwrap();
+        assert_eq!(migrated["schema_version"], CURRENT_SCHEMA_VERSION);
+        assert!(migrated.get("noise_canary").is_none());
     }
 
     #[test]
