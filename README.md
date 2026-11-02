@@ -222,7 +222,8 @@ replayable example with source-mapped assembly, counters, and capsule diffs.
 ## Trust and limitations
 
 Read [METHODOLOGY.md](METHODOLOGY.md), [CAPSULE_SPEC.md](CAPSULE_SPEC.md),
-[LANGUAGES.md](docs/LANGUAGES.md), and [LIMITATIONS.md](LIMITATIONS.md) before
+[LANGUAGES.md](docs/LANGUAGES.md), [SECURITY.md](SECURITY.md), and
+[LIMITATIONS.md](LIMITATIONS.md) before
 comparing or citing results. Simulated
 counter values are comparable only when the measured binary, input, toolchain,
 and simulator configuration match. Wall-clock time is host-specific.

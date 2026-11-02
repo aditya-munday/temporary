@@ -3,9 +3,11 @@
 Working directory: `/workspace/project`
 Remote: `https://github.com/aditya-munday/CodeCurrency-Runtime.git`
   (renamed from `CodeCurrency`; old URLs redirect)
-Active branch: `phase1/high-level-stats-clean` (PR #3: tie groups, Pareto
-  frontier, cache-hierarchy/TLB counters, and the host-noise canary). The engine
-  merged to `main` as PR #1 (commit `f5fb476`).
+Branch: `main` is the integration branch. The engine landed as PR #1
+  (`f5fb476`), x86-64 assembly and the capability matrix as PR #2
+  (`cd6ee37`), and statistical tie groups, the Pareto frontier,
+  cache-hierarchy/TLB counters, and the host-noise canary as PR #3
+  (`79ae23f`). All three are merged and green.
 Source idea document: `/workspace/project/PLATFORM_IDEA.txt`
 Task list for the current phase: `PHASE1_AGENT_PROMPT.txt` (untracked)
 GitHub CLI: authenticated as `aditya-munday` (scopes: gist, read:org, repo, workflow)
@@ -380,7 +382,7 @@ Hard-won facts, each of which was a real bug:
 
 - `cargo fmt --all -- --check`: clean.
 - `cargo clippy --workspace --all-targets -- -D warnings`: clean.
-- `cargo test --workspace`: 200 tests pass (139 core + 61 CLI), 1 ignored.
+- `cargo test --workspace --release`: 208 tests pass (145 core + 63 CLI), 1 ignored.
 - `python3 -m unittest scripts/test_compare_capsules.py`: 22 tests pass.
 - `ccx measure` on the naive solution: all metrics present and correctly
   labelled.
