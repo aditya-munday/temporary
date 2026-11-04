@@ -26,7 +26,27 @@ fn zig_target_flags() -> Vec<String> {
         "-target".to_string(),
         "x86_64-linux-gnu".to_string(),
         "-mcpu=baseline".to_string(),
+        // Zig's default job count follows the detected CPU count, and its
+        // emitted code depends on that count, so the same source builds to
+        // different bytes on hosts with different CPUs. Pin the job count so
+        // the clean-build reproducibility gate holds across machines.
+        "-j1".to_string(),
     ]
+}
+
+/// Quote a single argument for the fixed `/bin/sh` script that runs inside the
+/// sandbox. Only the solution's own declared program arguments pass through
+/// here, and they are already validated at load time, so this is a safety net
+/// rather than the primary defence.
+fn shell_quote(value: &str) -> String {
+    if !value.is_empty()
+        && value
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || "-_./=:,+".contains(c))
+    {
+        return value.to_string();
+    }
+    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 /// Guest path where a compiled program's directory is mounted read-only.
@@ -842,6 +862,203 @@ impl<'a> Pipeline<'a> {
     /// Compile the user's solution. The binary is returned as a `Program`.
     pub fn build_solution(&self) -> anyhow::Result<Program> {
         self.build_solution_timed().map(|(program, _)| program)
+    }
+
+    /// Build the solution with debug info and frame pointers, for profiling.
+    ///
+    /// Callgrind can only attribute instructions to source lines when the
+    /// binary carries line tables, and a frame pointer keeps the call graph
+    /// honest. Only languages with a real compile step are supported; a
+    /// language that cannot be profiled returns `None` so the caller can
+    /// report it as unavailable rather than emit an empty picture.
+    pub fn build_solution_for_profiling(&self) -> anyhow::Result<Option<Program>> {
+        if self.sol.build_system != BuildSystem::Direct {
+            return Ok(None);
+        }
+        let mut flags: Vec<String> = match self.sol.language {
+            ccx_core::capsule::Language::C => {
+                vec![self.sol.opt_level.clone(), "-std=c17".to_string()]
+            }
+            ccx_core::capsule::Language::Cpp => {
+                vec![self.sol.opt_level.clone(), "-std=c++20".to_string()]
+            }
+            ccx_core::capsule::Language::Rust => {
+                let opt = self.sol.opt_level.trim_start_matches("-O");
+                vec!["--edition=2021".to_string(), format!("-Copt-level={opt}")]
+            }
+            ccx_core::capsule::Language::D => vec![self.sol.opt_level.clone()],
+            _ => return Ok(None),
+        };
+        flags.push("-g".to_string());
+        flags.push("-fno-omit-frame-pointer".to_string());
+        flags.extend(self.sol.compiler_flags.iter().cloned());
+
+        let driver = ccx_core::toolchain::driver_for(self.sol.toolchain_name, self.sol.language);
+        let dir = self.scratch_dir().join("profile");
+        let sources = self.solution_source_paths();
+        let (_, _, _) = self.build_artifact(driver, &flags, &sources, &dir, "sol", false)?;
+        Ok(Some(Program {
+            host_dir: dir,
+            guest_binary: format!("{GUEST_PROG}/sol"),
+            runtime_argv: self.expand_runtime_argv("/prog/sol", &self.sol.program_args),
+            runtime_prefix: vec![],
+            args: self.sol.program_args.clone(),
+            prefix: vec![],
+        }))
+    }
+
+    fn solution_source_paths(&self) -> Vec<PathBuf> {
+        match self.sol.language {
+            ccx_core::capsule::Language::Rust => {
+                let entry = if self.source_dir.join("main.rs").is_file() {
+                    self.source_dir.join("main.rs")
+                } else {
+                    self.source_dir
+                        .join(self.sol.sources.keys().next().unwrap())
+                };
+                vec![entry]
+            }
+            ccx_core::capsule::Language::Zig | ccx_core::capsule::Language::Go => {
+                vec![self.source_dir.clone()]
+            }
+            _ => self
+                .sol
+                .sources
+                .keys()
+                .map(|name| self.source_dir.join(name))
+                .collect(),
+        }
+    }
+
+    /// Mount each distinct source directory read-only at `/src0`, `/src1`, ...
+    ///
+    /// The guest paths must match the ones the profiling build used, because
+    /// the binary records its source files at those paths and
+    /// `callgrind_annotate` reads them back from the same place.
+    fn source_mounts(&self, sources: &[PathBuf]) -> Vec<(String, String)> {
+        let mut mounts: Vec<(String, String)> = Vec::new();
+        for src in sources {
+            let Some(parent) = src.parent() else { continue };
+            let host = parent.to_string_lossy().to_string();
+            if mounts.iter().any(|(existing, _)| existing == &host) {
+                continue;
+            }
+            mounts.push((host, format!("/src{}", mounts.len())));
+        }
+        mounts
+    }
+
+    /// Run the solution under Callgrind, then annotate the profile.
+    ///
+    /// Returns the `callgrind_annotate --auto=yes` text and the raw Callgrind
+    /// file. The source directories are mounted at their recorded guest paths
+    /// so the annotation can interleave the author's own lines.
+    pub fn profile_callgrind(
+        &self,
+        prog: &Program,
+        input: &[u8],
+        policy: &SandboxPolicy,
+    ) -> anyhow::Result<(String, Option<String>)> {
+        let input_dir = self.create_input_dir()?;
+        let result = self.profile_callgrind_in(prog, input, policy, &input_dir);
+        let _ = std::fs::remove_dir_all(&input_dir);
+        result
+    }
+
+    fn profile_callgrind_in(
+        &self,
+        prog: &Program,
+        input: &[u8],
+        policy: &SandboxPolicy,
+        input_dir: &Path,
+    ) -> anyhow::Result<(String, Option<String>)> {
+        std::fs::write(input_dir.join("stdin.txt"), input)?;
+
+        let mut mounts = self.source_mounts(&self.solution_source_paths());
+        mounts.push((
+            prog.host_dir.to_string_lossy().to_string(),
+            GUEST_PROG.to_string(),
+        ));
+        mounts.push((
+            input_dir.to_string_lossy().to_string(),
+            GUEST_INPUT.to_string(),
+        ));
+        let include_args: String = mounts
+            .iter()
+            .filter(|(_, guest)| guest.starts_with("/src"))
+            .map(|(_, guest)| format!(" --include={guest}"))
+            .fold(String::new(), |mut acc, arg| {
+                acc.push_str(&arg);
+                acc
+            });
+
+        let mut program_argv = String::new();
+        for arg in &self.sol.program_args {
+            program_argv.push(' ');
+            program_argv.push_str(&shell_quote(arg));
+        }
+
+        // `--show=Ir` keeps the annotation to a single event column, so a row
+        // is unambiguously "count, then text". The raw Callgrind file still
+        // holds every event, which is what the flame graph is built from.
+        let script = format!(
+            "valgrind --tool=callgrind --cache-sim=yes --branch-sim=yes \
+--I1=32768,8,64 --D1=32768,8,64 --callgrind-out-file=/work/scratch/cg.out \
+-- {binary}{program_argv} || exit $?\n\
+callgrind_annotate --show=Ir --auto=yes --threshold=99{include_args} /work/scratch/cg.out",
+            binary = GUEST_PROG.to_string() + "/sol",
+        );
+
+        let mut run_policy = policy.clone();
+        // Valgrind is roughly fifty times slower than native, so the wall clock
+        // is sized for the simulator, not the machine.
+        run_policy.timeout_ms = policy.timeout_ms.saturating_mul(60).max(120_000);
+
+        let mut command: Vec<String> = vec!["/opt/ccx/runner".to_string()];
+        command.extend([
+            "--timeout-ms".to_string(),
+            run_policy.timeout_ms.to_string(),
+            "--memory-bytes".to_string(),
+            run_policy.memory_bytes.to_string(),
+            "--stack-bytes".to_string(),
+            "8388608".to_string(),
+            "--pids-limit".to_string(),
+            run_policy.pids_limit.to_string(),
+            "--max-output-bytes".to_string(),
+            (32 * 1024 * 1024u64).to_string(),
+            "--stdin".to_string(),
+            GUEST_STDIN.to_string(),
+            "--cwd".to_string(),
+            "/work/scratch".to_string(),
+            "--emit-file".to_string(),
+            "/work/scratch/cg.out".to_string(),
+            "--".to_string(),
+            "sh".to_string(),
+            "-eu".to_string(),
+            "-c".to_string(),
+            script,
+        ]);
+        let argv = run_policy.argv_mounted(&self.image, &command, &mounts);
+        let (_, stdout, stderr) = self.docker.run_bytes(&argv)?;
+        let (outcome, emitted) = ccx_core::engine::parse_framed_report_with_emit(&stdout)
+            .ok_or_else(|| {
+                Fixable::new(format!(
+                    "the hotspot profiler produced no usable report\n\nstderr:\n{}",
+                    String::from_utf8_lossy(&stderr)
+                ))
+                .fix("run `ccx doctor` and confirm the pinned image contains Valgrind")
+                .into_error()
+            })?;
+        if outcome.exit_status != 0 {
+            return Err(Fixable::new(format!(
+                "profiling failed (exit {})\n\n{}",
+                outcome.exit_status, outcome.stderr
+            ))
+            .fix("run `ccx asm` and `ccx run` first to check the solution itself")
+            .into_error());
+        }
+        let callgrind = emitted.and_then(|bytes| String::from_utf8(bytes).ok());
+        Ok((outcome.stdout, callgrind))
     }
 
     pub fn build_solution_timed(&self) -> anyhow::Result<(Program, BuildTiming)> {
@@ -2057,7 +2274,7 @@ mod tests {
     fn zig_builds_pin_linux_x86_64_baseline_target() {
         assert_eq!(
             zig_target_flags(),
-            vec!["-target", "x86_64-linux-gnu", "-mcpu=baseline"]
+            vec!["-target", "x86_64-linux-gnu", "-mcpu=baseline", "-j1"]
         );
     }
 

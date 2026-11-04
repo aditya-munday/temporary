@@ -241,6 +241,21 @@ pub enum Command {
         #[arg(long, default_value = ".")]
         dir: PathBuf,
     },
+    /// Attribute instructions to functions and source lines, and export a
+    /// flame graph.
+    Hotspot {
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+        /// Named problem size to profile.
+        #[arg(long, default_value = "naive")]
+        size: String,
+        /// Seed for the generated input.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        /// Write a self-contained flame-graph SVG here.
+        #[arg(long)]
+        flame: Option<PathBuf>,
+    },
     /// Diff two capsules: instructions, memory, branches, cache.
     Diff {
         /// Baseline capsule (the "before").
@@ -415,6 +430,12 @@ fn run(cli: &Cli) -> anyhow::Result<()> {
             output_dir.as_deref(),
         ),
         Command::Asm { dir } => cmd::asm::run(cli.format, dir),
+        Command::Hotspot {
+            dir,
+            size,
+            seed,
+            flame,
+        } => cmd::hotspot::run(cli.format, dir, size, *seed, flame.as_deref()),
         Command::Diff { a, b } => cmd::diff::run(cli.format, a, b),
         Command::Pareto { capsules, axes } => cmd::pareto::run(cli.format, capsules, axes),
         Command::Replay {

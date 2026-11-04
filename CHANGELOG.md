@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+- Pin Zig's build job count to one. Zig's emitted code depends on its job
+  count, which otherwise follows the host's detected CPU count, so the same
+  source built to different bytes on a 2-vCPU CI runner and a 4-vCPU
+  workstation. The clean-build reproducibility gate now holds across hosts.
+
 ## [0.1.0] - 2026-11-02
 
 - Harden the capsule parser and prove it. New `capsule_robustness` tests cover

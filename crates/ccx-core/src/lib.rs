@@ -8,11 +8,14 @@ pub mod capsule;
 pub mod engine;
 pub mod explain;
 pub mod host;
+pub mod hotspot;
+pub mod latency;
 pub mod measure;
 pub mod problem;
 pub mod ranking;
 pub mod repeat;
 pub mod sandbox;
+pub mod scaling;
 pub mod toolchain;
 
 pub use capsule::*;

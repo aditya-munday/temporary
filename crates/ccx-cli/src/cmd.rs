@@ -6,6 +6,7 @@ pub mod build;
 pub mod diff;
 pub mod doctor;
 pub mod experiment;
+pub mod hotspot;
 pub mod init;
 pub mod matrix;
 pub mod measure;

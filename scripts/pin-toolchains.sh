@@ -57,14 +57,38 @@ cp "$ZIG_CACHE" "$TOOLCHAIN_BUILD_CONTEXT/$(basename "$ZIG_ARCHIVE")"
 cp "$ODIN_CACHE" "$TOOLCHAIN_BUILD_CONTEXT/$(basename "$ODIN_ARCHIVE")"
 cp "$GO_CACHE" "$TOOLCHAIN_BUILD_CONTEXT/$(basename "$GO_ARCHIVE")"
 
+# `snapshot.debian.org` is a single shared archive that returns 503
+# (TooManyRequests) under load. A failed `apt-get` fetch is transient and
+# unrelated to the pinned content, so retry the build a few times; Docker
+# caches the layers that already succeeded, so a retry resumes near the
+# failure rather than starting over. This lives in the script, not the
+# Dockerfile, so it does not move the environment fingerprint.
+build_with_retry() {
+  local tag="$1" dockerfile="$2"
+  local attempt=1 max_attempts=5
+  while true; do
+    if docker build --build-arg "DEBIAN_SNAPSHOT=$DEBIAN_SNAPSHOT" \
+        -f "$TOOLCHAIN_BUILD_CONTEXT/$dockerfile" -t "$tag" "$TOOLCHAIN_BUILD_CONTEXT"; then
+      return 0
+    fi
+    if (( attempt >= max_attempts )); then
+      echo "docker build for $tag failed after $max_attempts attempts" >&2
+      return 1
+    fi
+    echo "docker build for $tag failed (attempt $attempt/$max_attempts); retrying in $((attempt * 10))s" >&2
+    sleep $((attempt * 10))
+    attempt=$((attempt + 1))
+  done
+}
+
 echo "==> building $GCC_TAG"
-docker build --build-arg "DEBIAN_SNAPSHOT=$DEBIAN_SNAPSHOT" -f "$TOOLCHAIN_BUILD_CONTEXT/gcc.Dockerfile" -t "$GCC_TAG" "$TOOLCHAIN_BUILD_CONTEXT"
+build_with_retry "$GCC_TAG" gcc.Dockerfile
 
 echo "==> building $CLANG_TAG"
-docker build --build-arg "DEBIAN_SNAPSHOT=$DEBIAN_SNAPSHOT" -f "$TOOLCHAIN_BUILD_CONTEXT/clang.Dockerfile" -t "$CLANG_TAG" "$TOOLCHAIN_BUILD_CONTEXT"
+build_with_retry "$CLANG_TAG" clang.Dockerfile
 
 echo "==> building $RUST_TAG"
-docker build --build-arg "DEBIAN_SNAPSHOT=$DEBIAN_SNAPSHOT" -f "$TOOLCHAIN_BUILD_CONTEXT/rust.Dockerfile" -t "$RUST_TAG" "$TOOLCHAIN_BUILD_CONTEXT"
+build_with_retry "$RUST_TAG" rust.Dockerfile
 
 gcc_digest=$(docker inspect --format='{{index .RepoDigests 0}}' "$GCC_TAG" 2>/dev/null || true)
 clang_digest=$(docker inspect --format='{{index .RepoDigests 0}}' "$CLANG_TAG" 2>/dev/null || true)

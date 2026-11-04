@@ -386,6 +386,17 @@ Hard-won facts, each of which was a real bug:
     the output pipe open; the case now reads only the parent's exit and treats a
     pids-limit refusal as the expected containment.
 
+11. **Zig's output bytes depend on its job count, which follows the host.** The
+    clean-build gate (`ccx measure --repeat N`) compares the built `sol` by
+    SHA-256, and Zig's emitted code depends on the `-j` value it is given.
+    `-j` defaults to the detected CPU count, so the same source produced one
+    digest on a 2-vCPU CI runner and another on a 4-vCPU workstation, failing
+    with `clean build 1 produced different executable bytes`. Verified: `-j1`
+    is byte-identical across 1-, 2-, and 4-CPU configurations, while the
+    default is not. The pinned Zig profile now always passes `-j1`
+    (`zig_target_flags`). Any other language whose output depends on worker
+    count needs the same treatment.
+
 ### Known-honest results (not bugs)
 
 - `ccx test` runs the arena solution at every size in `problem.json`
