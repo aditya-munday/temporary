@@ -71,10 +71,14 @@ The engine, not the submission, decides the result.
   `/work/.ccx-harness`, `/proc/sys/kernel/perf_event_paranoid`, and `/in/main.c`;
   the read-only root and unprivileged user keep all of them unchanged, and the
   suite asserts the host source file is byte-identical afterwards.
+- The runner frames its report with length-prefixed sections (`CCX-OUT`,
+  `CCX-ERR`, `CCX-ALLOC`, `CCX-EMIT`) and the verdict last, so the submission's
+  own bytes can never be read as the verdict. The `OutputForgery` hostile case
+  prints the framing sentinel itself and must not change the reported status.
 
 ## The hostile suite
 
-`scripts/safety-suite.sh` builds and runs fifteen adversarial programs inside
+`scripts/safety-suite.sh` builds and runs seventeen adversarial programs inside
 the real pinned image and asserts containment by the *reason* each one stopped,
 not merely that it stopped:
 
@@ -92,6 +96,8 @@ not merely that it stopped:
 | `symlink_escape` | A scratch symlink cannot reach a host path. |
 | `proc_and_sys_probe` | No host bytes are readable through `/proc/1/root`, `/proc/kcore`, or `/proc/1/mem`. |
 | `ptrace_attempt` | Attaching to another process is refused. |
+| `signal_trick` | Signals from the child cannot kill or stop the runner. |
+| `output_forgery` | The child's own framing cannot become the verdict. |
 | `clock_tamper` | `clock_settime` and `settimeofday` are refused. |
 | `network_attempt` | The connection does not succeed. |
 | `tamper_with_results` | The host source is unchanged. |

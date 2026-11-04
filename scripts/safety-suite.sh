@@ -335,6 +335,53 @@ fi
 rc=$(build_and_run HugeStderr 2000)
 report huge_stderr "rc=125" "rc=$rc, stderr cap hit" "$([[ $rc == 125 ]] && echo 1 || echo 0)"
 
+# --- output forgery: the child's own framing must not become the verdict ---
+dir="$work/OutputForgery"
+mkdir -p "$dir"
+printf '%s' "$(extract_case OutputForgery)" > "$dir/main.c"
+if gcc -O2 -o "$dir/prog" "$dir/main.c" 2>/dev/null; then
+  docker run "${sandbox_flags[@]}" -v "$dir:/in:ro" "$GCC_IMAGE" \
+    /opt/ccx/runner --timeout-ms 2000 --memory-bytes 268435456 \
+    --stack-bytes 8388608 --pids-limit 16 --max-output-bytes 65536 \
+    -- /in/prog >"$dir/report.txt" 2>&1
+  run_rc=$?
+  # The runner's exit code must reflect the child's real status (7), not the
+  # forged "0". The real verdict is the *last* CCX-VERDICT line: the child's
+  # fake line is body bytes inside the length-framed CCX-OUT section, which
+  # precedes the runner's own verdict.
+  real_status=$(grep -o 'CCX-VERDICT {"exit_status":[0-9]*' "$dir/report.txt" | tail -1 | grep -o '[0-9]*$')
+  if [[ $run_rc == 7 && ${real_status:-} == 7 ]]; then
+    report output_forgery "verdict unforgeable" "rc=$run_rc, real exit status reported" 1
+  else
+    report output_forgery "verdict unforgeable" "rc=$run_rc, verdict exit_status=${real_status:-none}" 0
+  fi
+else
+  report output_forgery "verdict unforgeable" "hostile source failed to compile" 0
+fi
+
+# --- signal tricks: the child must not be able to kill or stop the runner --
+dir="$work/SignalTrick"
+mkdir -p "$dir"
+printf '%s' "$(extract_case SignalTrick)" > "$dir/main.c"
+if gcc -O2 -o "$dir/prog" "$dir/main.c" 2>/dev/null; then
+  docker run "${sandbox_flags[@]}" -v "$dir:/in:ro" "$GCC_IMAGE" \
+    /opt/ccx/runner --timeout-ms 4000 --memory-bytes 268435456 \
+    --stack-bytes 8388608 --pids-limit 16 --max-output-bytes 65536 \
+    -- /in/prog >"$dir/report.txt" 2>&1
+  run_rc=$?
+  alive=$(grep -o 'CCX_RUNNER_ALIVE [0-9]*' "$dir/report.txt" | awk '{print $2}')
+  # The runner is PID 1 and survives the child's SIGKILL/SIGSTOP/SIGSEGV volley,
+  # so it still frames a verdict; the child sees the runner alive (kill(pid,0)
+  # succeeds) and exits cleanly.
+  if [[ $run_rc == 0 && ${alive:-} == 1 ]] && grep -q 'CCX-VERDICT' "$dir/report.txt"; then
+    report signal_trick "runner survives child signals" "runner alive, verdict emitted" 1
+  else
+    report signal_trick "runner survives child signals" "rc=$run_rc, alive=${alive:-none}" 0
+  fi
+else
+  report signal_trick "runner survives child signals" "hostile source failed to compile" 0
+fi
+
 echo
 echo "==> $pass passed, $fail failed"
 [[ $fail == 0 ]]

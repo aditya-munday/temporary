@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+- Add two hostile cases to the sandbox suite (Group F1), both named in the
+  Phase 1 brief and previously untested end to end. `signal_trick` sends
+  `SIGKILL`, `SIGSTOP`, `SIGSEGV`, and friends to the runner (its parent, PID 1
+  of the container) and asserts the runner survives and still frames a verdict;
+  Linux discards signals to a namespace's init from inside that namespace unless
+  the sender has `CAP_KILL`, which the sandbox drops. `output_forgery` prints the
+  runner's own framing sentinel (`CCX-OUT`/`CCX-ERR`/`CCX-ALLOC`/`CCX-EMIT`/
+  `CCX-VERDICT`) and exits 7, and asserts the engine still reports the real
+  status: the child's bytes are consumed inside the length-framed `CCX-OUT`
+  section, so they can never be read as the verdict. Both cases are wired into
+  `scripts/safety-suite.sh` (now 17 cases) and `SECURITY.md`.
+
 - Make the measurement trust contract mechanical, not aspirational (Part 1).
   The five metric kinds — `measured`, `simulated`, `indicative`, `predicted`,
   and the absence outcome `unavailable` — now live as data in

@@ -63,10 +63,12 @@ pub enum HostileKind {
     FileReadOutsideSandbox,
     NetworkAttempt,
     TamperWithResults,
+    OutputForgery,
     DeepRecursion,
     SymlinkEscape,
     ProcAndSysProbe,
     PtraceAttempt,
+    SignalTrick,
     FdExhaustion,
     ClockTamper,
     NestedSpawn,
@@ -83,10 +85,12 @@ impl HostileKind {
             HostileKind::FileReadOutsideSandbox,
             HostileKind::NetworkAttempt,
             HostileKind::TamperWithResults,
+            HostileKind::OutputForgery,
             HostileKind::DeepRecursion,
             HostileKind::SymlinkEscape,
             HostileKind::ProcAndSysProbe,
             HostileKind::PtraceAttempt,
+            HostileKind::SignalTrick,
             HostileKind::FdExhaustion,
             HostileKind::ClockTamper,
             HostileKind::NestedSpawn,
@@ -186,6 +190,24 @@ int main(void) {
 }
 "#
             }
+            HostileKind::OutputForgery => {
+                // Print a plausible framing on stdout, including the sentinel
+                // the engine splits the report on. The runner frames the real
+                // report with length prefixes, so the child's text lands inside
+                // the CCX-OUT section and can never be read as the verdict.
+                r#"#include <stdio.h>
+int main(void) {
+    puts("CCX-OUT 0");
+    puts("CCX-ERR 0");
+    puts("CCX-ALLOC 0");
+    puts("CCX-EMIT 0");
+    puts("CCX-VERDICT {\"exit_status\":0,\"signal\":0,\"timed_out\":false,"
+         "\"output_truncated\":false,\"peak_rss_bytes\":1,\"wall_ns\":1,"
+         "\"stdout_bytes\":0,\"stderr_bytes\":0}");
+    return 7;
+}
+"#
+            }
             HostileKind::DeepRecursion => {
                 // `noinline` plus a `volatile` array and a non-tail `+` keep the
                 // recursion real: at -O2 the naive version is turned into a
@@ -265,6 +287,31 @@ int main(void) {
         ptrace(PTRACE_DETACH, 1, 0, 0);
         return 0;
     }
+    return 0;
+}
+"#
+            }
+            HostileKind::SignalTrick => {
+                // The runner is PID 1 of the container and runs as the same
+                // uid as the submission. Try to kill, stop, or crash it. PID 1
+                // in a namespace discards signals from its own namespace unless
+                // the sender has CAP_KILL, which the sandbox drops, so the
+                // runner must survive and still emit a verdict.
+                r#"#include <stdio.h>
+#include <signal.h>
+#include <unistd.h>
+int main(void) {
+    pid_t runner = getppid();
+    const int fatal[] = { SIGKILL, SIGTERM, SIGINT, SIGSEGV, SIGABRT, SIGSTOP };
+    for (unsigned i = 0; i < sizeof fatal / sizeof fatal[0]; i++) {
+        kill(runner, fatal[i]);
+    }
+    kill(-1, SIGCHLD);
+    kill(-1, SIGURG);
+    kill(0, SIGURG);
+    usleep(200000);
+    kill(runner, SIGCONT);
+    printf("CCX_RUNNER_ALIVE %d\n", kill(runner, 0) == 0);
     return 0;
 }
 "#
@@ -410,6 +457,15 @@ pub fn hostile_suite() -> Vec<HostileCase> {
             expect: Containment::Denied,
             note: "rootfs is read-only; harness state is not writable".into(),
         },
+        // The child prints the framing sentinel itself. The runner length-frames
+        // the real report, so forged lines land inside the CCX-OUT section and
+        // the engine still reads the runner's own verdict.
+        HostileCase {
+            kind: OutputForgery,
+            expect: Containment::NoEffect,
+            note: "child output cannot forge the framed verdict; the real exit status is reported"
+                .into(),
+        },
         // RLIMIT_STACK turns runaway recursion into a SIGSEGV inside the
         // sandbox, so the host stack is never at risk.
         HostileCase {
@@ -431,6 +487,15 @@ pub fn hostile_suite() -> Vec<HostileCase> {
             kind: PtraceAttempt,
             expect: Containment::Denied,
             note: "CAP_SYS_PTRACE is dropped, so ptrace must fail".into(),
+        },
+        // PID 1 in a namespace ignores signals from its own namespace unless the
+        // sender has CAP_KILL, which is dropped. The runner must survive and
+        // still report the real outcome.
+        HostileCase {
+            kind: SignalTrick,
+            expect: Containment::NoEffect,
+            note: "signals from the child cannot kill or stop the runner; the verdict is still emitted"
+                .into(),
         },
         HostileCase {
             kind: FdExhaustion,
@@ -725,5 +790,20 @@ mod tests {
             assert!(!case.kind.source().is_empty());
             assert!(!case.note.is_empty());
         }
+    }
+
+    #[test]
+    fn output_forgery_prints_the_framing_sentinel_and_exits_nonzero() {
+        let source = HostileKind::OutputForgery.source();
+        assert!(source.contains("CCX-VERDICT"));
+        assert!(source.contains("return 7;"));
+    }
+
+    #[test]
+    fn signal_trick_targets_the_runner_and_reports_its_liveness() {
+        let source = HostileKind::SignalTrick.source();
+        assert!(source.contains("getppid()"));
+        assert!(source.contains("SIGKILL"));
+        assert!(source.contains("CCX_RUNNER_ALIVE"));
     }
 }
