@@ -56,7 +56,10 @@ pinned image, a runner entry, and a problem fixture before it can move to
   `branch_instructions`, `branch_miss_rate`).
 - **Allocations** — Valgrind Memcheck xtree allocation counts
   (`allocations`, `allocated_bytes`) for the main process.
-- **Peak memory** — `getrusage` peak RSS, reported as `indicative`.
+- **Peak memory** — the kernel cgroup memory high-water mark
+  (`memory.peak` on cgroup v2, `memory.max_usage_in_bytes` on v1) when the
+  host exposes one and it covers the run, otherwise `getrusage` peak RSS.
+  Reported as `indicative`; the capsule's method names the source.
 - **Binary size** — filesystem `stat` of the built artifact, reported as
   `measured`.
 - **Compiler remarks** — a source-filtered optimizer report surfaced through

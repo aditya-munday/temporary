@@ -11,6 +11,7 @@ pub mod host;
 pub mod hotspot;
 pub mod latency;
 pub mod measure;
+pub mod memory;
 pub mod problem;
 pub mod ranking;
 pub mod repeat;

@@ -142,6 +142,8 @@ impl BatchProcessRecord {
             involuntary_context_switches: self.involuntary_context_switches,
             block_input_ops: self.block_input_ops,
             block_output_ops: self.block_output_ops,
+            peak_memory_bytes: None,
+            peak_memory_source: None,
         })
     }
 
@@ -938,6 +940,7 @@ mod tests {
                 involuntary_context_switches: Some(6),
                 block_input_ops: Some(7),
                 block_output_ops: Some(8),
+                ..ResourceUsage::default()
             }),
             first_difference: None,
         };

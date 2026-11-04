@@ -1,4 +1,4 @@
-# CAPSULE_SPEC.md — Experiment Capsule, version 18
+# CAPSULE_SPEC.md — Experiment Capsule, version 19
 
 A **capsule** is the unit of evidence on CodeCurrency. It is a small, versioned
 JSON document that fully describes one measured run of one solution to one
@@ -26,7 +26,7 @@ Design rules:
 
 ```jsonc
 {
-  "schema_version": 18,         // integer, bumped only with a migration
+  "schema_version": 19,         // integer, bumped only with a migration
   "capsule_id": "…",            // sha256 of the canonical body (see §10)
   "created_at": "2026-10-26T11:00:00Z",  // RFC 3339, UTC
   "problem":   { … },           // §2
@@ -118,7 +118,7 @@ without a fabricated reference digest; replay calls out that missing identity.
 | field | type | notes |
 |---|---|---|
 | `version` | string | semver of the measurement harness |
-| `metric_method` | enum | `cachegrind`, `perf`, `getrusage`, `stat`, `manual`, `valgrind_memcheck`, `wall_clock`, `runner` |
+| `metric_method` | enum | `cachegrind`, `perf`, `getrusage`, `cgroup`, `stat`, `manual`, `valgrind_memcheck`, `wall_clock`, `runner` |
 | `ruleset` | string | hash of the rule set used for hints (§Layer 8) |
 
 ## 8. `input`
@@ -189,7 +189,7 @@ stable as metrics are added.
   "value": 1234567,
   "unit": "count",
   "kind": "simulated",        // measured | simulated | indicative
-  "method": "cachegrind",     // cachegrind | perf | getrusage | stat | manual | valgrind_memcheck | wall_clock | runner
+  "method": "cachegrind",     // cachegrind | perf | getrusage | cgroup | stat | manual | valgrind_memcheck | wall_clock | runner
   "uncertainty": null          // or { "kind": "stdev"|"ci95"|"range", "value": … }
 }
 ```
@@ -213,7 +213,7 @@ Phase 1 metric set:
 | `ipc_hw` | instructions/cycle | measured when available | perf |
 | `average_cpu_frequency_hw` | hertz | measured when available | perf + getrusage |
 | `branch_misses` | count | simulated | cachegrind |
-| `peak_memory` | bytes | indicative | getrusage |
+| `peak_memory` | bytes | indicative | cgroup, else `getrusage` |
 | `allocations` | count | measured | Valgrind Memcheck xtree |
 | `allocated_bytes` | bytes | measured | Valgrind Memcheck xtree |
 | `binary_size` | bytes | measured | stat |
@@ -535,6 +535,7 @@ adds a safe default. "Set version" means the step only bumps the integer.
 | 15 | 16 | optional `applied_tolerance` | the field is simply absent |
 | 16 | 17 | optional `noise_canary` | the field is simply absent |
 | 17 | 18 | optional `timing` | the field is simply absent |
+| 18 | 19 | `cgroup` metric method | set version; an old `peak_memory` keeps its `getrusage` method, which is still what produced it |
 
 Original fields keep their meaning across every step. A capsule is never
 silently rewritten on disk by a migration; migration output is written to a new

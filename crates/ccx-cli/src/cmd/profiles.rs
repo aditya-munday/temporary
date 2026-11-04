@@ -591,7 +591,7 @@ pub fn catalog() -> ProfileCatalog {
             metric("allocations", "measured", "Valgrind Memcheck xtree, main process"),
             metric("allocated_bytes", "measured", "Valgrind Memcheck xtree, main process"),
             metric("binary_size", "measured", "filesystem stat"),
-            metric("peak_memory", "indicative", "getrusage peak RSS"),
+            metric("peak_memory", "indicative", "cgroup high-water mark, else getrusage peak RSS"),
             metric("wall_clock", "indicative", "repeated fresh-process timing"),
             metric(
                 "reference_wall_clock",

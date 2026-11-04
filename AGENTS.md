@@ -253,10 +253,12 @@ scaffold emits a `.file` directive so the object is byte-identical across clean
 builds. Per-language coverage is published in `docs/LANGUAGES.md` and by
 `ccx profiles` (aliases `ccx languages`, `ccx platforms`).
 
-Capsules are at **schema 18** (schema 15 added raw repeatability observations;
+Capsules are at **schema 19** (schema 15 added raw repeatability observations;
 schema 16 adds the optional `applied_tolerance` field; schema 17 adds the
 optional `noise_canary` field; schema 18 adds the optional `timing` field with
-wall-clock outlier flags and warm-up evidence). See `CAPSULE_SPEC.md`.
+wall-clock outlier flags and warm-up evidence; schema 19 adds the `cgroup`
+metric method so `peak_memory` can name the kernel cgroup high-water mark
+instead of `getrusage`). See `CAPSULE_SPEC.md`.
 
 ### Wall-clock timing diagnostics
 
@@ -293,6 +295,10 @@ image needs a C compiler (all three have one).
   achieved reproducibility across the resulting capsules, against the ranking
   tolerance. Exits non-zero when a deterministic metric drifts beyond it.
 - `ccx replay <capsule.json>` — rebuild, re-measure, and compare to the capsule.
+- `ccx memory` — the two memory numbers separately: peak memory (cgroup
+  high-water mark when the host exposes one that covers the run, else
+  `getrusage` peak RSS, `indicative`) and the Valgrind Massif live-heap
+  high-water mark (`measured`, decomposed by allocation site and size class).
 - `ccx init`, `ccx asm`, `ccx diff`, `ccx matrix`, `ccx pareto`,
   `ccx experiment`, `ccx validate`, `ccx doctor` — see `ccx --help`.
 
@@ -316,7 +322,7 @@ Kinds and methods currently emitted:
 | --- | --- | --- |
 | `instructions`, `cache_misses`, `branch_misses`, `memory_refs`, `branches` | simulated | cachegrind |
 | `allocations`, `allocated_bytes` | measured | manual (alloc shim) |
-| `peak_memory` | indicative | getrusage |
+| `peak_memory` | indicative | cgroup, else getrusage |
 | `binary_size` | measured | stat |
 
 Hard-won facts, each of which was a real bug:
@@ -411,15 +417,34 @@ Hard-won facts, each of which was a real bug:
     (`zig_target_flags`). Any other language whose output depends on worker
     count needs the same treatment.
 
+12. **`memory.peak` is a high-water mark for the life of the cgroup, not for the
+    run.** The cgroup v2 file only ever grows, so a raw read after the child
+    overstates nothing but attributes every earlier byte to this run. The runner
+    snapshots it before `fork` and reports the delta, and only trusts a delta
+    that is at least half the child's own `getrusage` peak RSS. A host-wide
+    cgroup that already reached its peak (the common Docker case) yields a tiny
+    delta, which the floor rejects in favour of `getrusage`; a fresh
+    per-container cgroup yields a delta near the child's true peak, which is
+    accepted and labelled `cgroup`. Verified on this host: a 200 MB allocation
+    reports `cgroup` at ~206 MB (vs `getrusage` ~211 MB), while a 4 MB
+    allocation after a 200 MB run falls back to `getrusage` because the cgroup
+    peak was already set. The two instruments measure slightly different things
+    (cgroup counts charged anon and page cache, `getrusage` counts resident
+    pages), so the runner never reports one as the other — the source travels
+    with the number in `peak_memory_source` and as the metric's `method`.
+    The file is read-only and cannot be reset per run, so a fresh container is
+    the only way to get a clean cgroup reading.
+
 ### Known-honest results (not bugs)
 
 - `ccx test` runs the arena solution at every size in `problem.json`
   (`naive`=800, `good`=20000, `great`=200000). The naive O(n²) solution
   legitimately times out at n=200000. That is the point of the problem, not a
   harness failure.
-- `peak_memory` drifts between runs because it comes from `getrusage` and is
-  machine-dependent. It is labelled *indicative*, and replay attributes drift to
-  the machine rather than the solution.
+- `peak_memory` drifts between runs because it is a host memory high-water mark
+  (cgroup when the kernel exposes one that covers the run, else `getrusage`),
+  and is machine-dependent. It is labelled *indicative*, and replay attributes
+  drift to the machine rather than the solution.
 - Go counter spread between fresh processes is wider than the ranking gate, so
   Go measurements require `--repeat 20` and stay UNRANKED until the spread is
   within the documented tolerance.
@@ -431,7 +456,7 @@ Hard-won facts, each of which was a real bug:
 
 - `cargo fmt --all -- --check`: clean.
 - `cargo clippy --workspace --all-targets -- -D warnings`: clean.
-- `cargo test --workspace --release`: 217 tests pass (148 core + 63 CLI + 6
+- `cargo test --workspace --release`: 262 tests pass (178 core + 78 CLI + 6
   integration), 1 ignored. `capsule_robustness.rs` adds the parser fuzz and
   migration-path tests.
 - `python3 -m unittest scripts/test_compare_capsules.py`: 22 tests pass.

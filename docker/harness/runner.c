@@ -73,6 +73,49 @@ static long long timeval_ns(struct timeval value) {
     return (long long)value.tv_sec * 1000000000LL + (long long)value.tv_usec * 1000LL;
 }
 
+/* Read a cgroup memory peak file, if the kernel exposes one. Returns -1 when
+   no such file exists, so the caller can fall back to getrusage instead of
+   reporting a misleading zero.
+
+   The peak file is cumulative for the life of the cgroup: under the Docker
+   cgroup the container's memory.peak is inherited from the parent cgroup and
+   only ever grows. The caller snapshots it before the child runs and reports
+   the difference, so a value read here means "bytes charged to this cgroup
+   during this run", not "since the container started". */
+static long long read_cgroup_peak_bytes(void) {
+    static const char *paths[] = {
+        "/sys/fs/cgroup/memory.peak",             /* cgroup v2 */
+        "/sys/fs/cgroup/memory/memory.max_usage_in_bytes", /* cgroup v1 */
+    };
+    for (size_t i = 0; i < sizeof paths / sizeof paths[0]; i++) {
+        FILE *file = fopen(paths[i], "r");
+        if (!file) {
+            continue;
+        }
+        long long value = -1;
+        if (fscanf(file, "%lld", &value) != 1) {
+            value = -1;
+        }
+        fclose(file);
+        if (value >= 0) {
+            return value;
+        }
+    }
+    return -1;
+}
+
+/* The memory peak the kernel charged to this process's cgroup during the run:
+   the difference between the peak read after the child and the snapshot taken
+   before it. Returns -1 when the kernel exposes no peak file, or when the
+   reading went backwards (a wrap or a cgroup reset), so the caller falls back
+   to getrusage rather than publishing a number it cannot stand behind. */
+static long long cgroup_peak_delta(long long before, long long after) {
+    if (before < 0 || after < 0 || after < before) {
+        return -1;
+    }
+    return after - before;
+}
+
 struct hardware_fds {
     int instructions;
     int cache_misses;
@@ -541,6 +584,7 @@ int main(int argc, char **argv) {
     }
 
     long long start = now_ns();
+    long long cgroup_peak_before = read_cgroup_peak_bytes();
 
     pid_t pid = fork();
     if (pid < 0) {
@@ -816,6 +860,35 @@ int main(int argc, char **argv) {
 
     /* ru_maxrss is in kilobytes on Linux. */
     long long peak_rss_bytes = (long long)ru.ru_maxrss * 1024LL;
+    /* Prefer the cgroup high-water mark when the kernel exposes one: it is the
+       memory charged to the container, which is what a memory limit and a
+       "how much did this cost" question are about.
+
+       The peak file is cumulative for the life of the cgroup, so the caller
+       reports the difference between a snapshot taken before the child and the
+       reading after it. The child runs inside this cgroup, so a delta that
+       covers the run must be at least on the order of the child's own peak
+       RSS. A delta far below that means the peak was already reached before
+       this run -- the common case when the cgroup is host-wide rather than
+       per-container -- and the difference would understate the run. In that
+       case, and when no peak file exists at all, getrusage is the answer.
+
+       The two instruments do not measure exactly the same thing (cgroup counts
+       charged anon and page cache; getrusage counts resident pages), so they
+       agree only to within a few percent; the half-RSS floor accepts a real
+       cgroup reading without accepting a stale one. The verdict names the
+       source, so a reader is never told "getrusage" when the number came from
+       the kernel accounting, or the reverse. */
+    long long cgroup_peak = cgroup_peak_delta(cgroup_peak_before, read_cgroup_peak_bytes());
+    const char *peak_source;
+    long long peak_bytes;
+    if (cgroup_peak >= peak_rss_bytes / 2) {
+        peak_bytes = cgroup_peak;
+        peak_source = "cgroup";
+    } else {
+        peak_bytes = peak_rss_bytes;
+        peak_source = "getrusage";
+    }
     long long user_cpu_ns = timeval_ns(ru.ru_utime);
     long long system_cpu_ns = timeval_ns(ru.ru_stime);
     char instructions_hw_json[32];
@@ -900,6 +973,7 @@ int main(int argc, char **argv) {
             "\"minor_page_faults\":%ld,\"major_page_faults\":%ld,"
             "\"voluntary_context_switches\":%ld,\"involuntary_context_switches\":%ld,"
             "\"block_input_ops\":%ld,\"block_output_ops\":%ld,"
+            "\"peak_memory_bytes\":%lld,\"peak_memory_source\":\"%s\","
             "\"instructions_hw\":%s,\"cache_misses_hw\":%s,\"branch_misses_hw\":%s,"
             "\"cpu_cycles_hw\":%s,"
             "\"l1d_cache_misses_hw\":%s,\"l1i_cache_misses_hw\":%s,"
@@ -911,6 +985,7 @@ int main(int argc, char **argv) {
             artifact_too_large ? "true" : "false",
             peak_rss_bytes, wall_ns, out_bytes, err_bytes, user_cpu_ns, system_cpu_ns,
             ru.ru_minflt, ru.ru_majflt, ru.ru_nvcsw, ru.ru_nivcsw, ru.ru_inblock, ru.ru_oublock,
+            peak_bytes, peak_source,
             instructions_hw_json, cache_misses_hw_json, branch_misses_hw_json, cpu_cycles_hw_json,
             l1d_cache_misses_hw_json, l1i_cache_misses_hw_json, llc_cache_misses_hw_json,
             dtlb_cache_misses_hw_json, itlb_cache_misses_hw_json);

@@ -13,7 +13,7 @@ pub mod migrate;
 pub mod repeatability;
 
 /// The schema version this build writes.
-pub const CURRENT_SCHEMA_VERSION: u32 = 18;
+pub const CURRENT_SCHEMA_VERSION: u32 = 19;
 pub const LEGACY_BINARY_DIGEST_UNAVAILABLE: &str = "unavailable_legacy";
 pub const DEFAULT_BUILD_REPEAT: u32 = 3;
 
@@ -123,6 +123,10 @@ pub enum MetricMethod {
     Cachegrind,
     Perf,
     Getrusage,
+    /// The kernel's cgroup memory high-water mark (`memory.peak` on cgroup v2,
+    /// `memory.max_usage_in_bytes` on v1). A measurement of the memory charged
+    /// to the run's cgroup, which is what a container memory limit governs.
+    Cgroup,
     Stat,
     Manual,
     ValgrindMemcheck,
@@ -184,7 +188,10 @@ impl Metric {
         self.kind == MetricKind::Indicative
             || matches!(
                 self.method,
-                MetricMethod::Getrusage | MetricMethod::Perf | MetricMethod::WallClock
+                MetricMethod::Getrusage
+                    | MetricMethod::Cgroup
+                    | MetricMethod::Perf
+                    | MetricMethod::WallClock
             )
     }
 }

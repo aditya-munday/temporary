@@ -11,6 +11,7 @@ pub mod init;
 pub mod latency;
 pub mod matrix;
 pub mod measure;
+pub mod memory;
 pub mod pareto;
 pub mod profiles;
 pub mod repeat;

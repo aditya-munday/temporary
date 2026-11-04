@@ -171,7 +171,9 @@ Execution wall time and peak
 memory are never ranking signals.
 Linux `getrusage` also records process CPU time, page faults, context switches,
 and block-I/O operation counts; these are measured OS counters and are not
-network or file-latency measurements. When permitted by the host kernel, the
+network or file-latency measurements. Peak memory is taken from the kernel
+cgroup high-water mark when the host exposes one, falling back to `getrusage`
+peak RSS otherwise. When permitted by the host kernel, the
 runner additionally records hardware CPU cycles and derives IPC and effective
 average CPU frequency; these values are machine-specific and omitted when the
 hardware events are unavailable.
@@ -195,8 +197,9 @@ profiles are limited to the safe C/C++ argv template.
 ## Commands
 
 `ccx doctor`, `init`, `build`, `run`, `test`, `measure`, `repeat`, `experiment`,
-`matrix`, `pareto`, `asm`, `hotspot`, `diff`, `latency`, `scaling`, `replay`,
-and `validate` are available. Add `--format json` for machine-readable reports.
+`matrix`, `pareto`, `asm`, `hotspot`, `memory`, `diff`, `latency`, `scaling`,
+`replay`, and `validate` are available. Add `--format json` for machine-readable
+reports.
 `ccx build` stores the binary under `.ccx/out` using its SHA-256 in the
 filename; intermediate files use a per-invocation scratch directory. Run
 `ccx --help` and `ccx <command> --help` for arguments.
@@ -228,6 +231,14 @@ thread). It never extrapolates a thread count it did not run, and it says when
 the curve has stopped growing. The sweep is `indicative` because speed-up is a
 ratio of whole-process wall times; a serial solution correctly produces a flat
 curve.
+
+`ccx memory` answers "how much memory did it use" with two numbers that are not
+the same number: peak memory, labelled `indicative` and taken from the kernel
+cgroup high-water mark when the host exposes one that covers the run, otherwise
+`getrusage` peak RSS, and the Valgrind Massif live-heap high-water mark,
+labelled `measured` and decomposed by allocation site and power-of-two size
+class. It reports both rather than conflating them, so a reader can see where
+the live bytes sat and not just how many there were.
 
 ## Problems
 

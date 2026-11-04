@@ -54,7 +54,7 @@ pub struct RunOutcome {
     pub hardware: Option<HardwareCounters>,
 }
 
-#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct ResourceUsage {
     pub user_cpu_ns: Option<u64>,
     pub system_cpu_ns: Option<u64>,
@@ -64,6 +64,12 @@ pub struct ResourceUsage {
     pub involuntary_context_switches: Option<u64>,
     pub block_input_ops: Option<u64>,
     pub block_output_ops: Option<u64>,
+    /// The memory high-water mark the runner chose, in bytes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_memory_bytes: Option<u64>,
+    /// Where that number came from: `cgroup` or `getrusage`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub peak_memory_source: Option<String>,
 }
 
 impl RunOutcome {
@@ -125,6 +131,10 @@ impl RunOutcome {
             #[serde(default)]
             block_output_ops: Option<u64>,
             #[serde(default)]
+            peak_memory_bytes: Option<u64>,
+            #[serde(default)]
+            peak_memory_source: Option<String>,
+            #[serde(default)]
             instructions_hw: Option<u64>,
             #[serde(default)]
             cache_misses_hw: Option<u64>,
@@ -151,7 +161,8 @@ impl RunOutcome {
             || raw.voluntary_context_switches.is_some()
             || raw.involuntary_context_switches.is_some()
             || raw.block_input_ops.is_some()
-            || raw.block_output_ops.is_some();
+            || raw.block_output_ops.is_some()
+            || raw.peak_memory_bytes.is_some();
         Some(RunOutcome {
             exit_status: raw.exit_status,
             signal: raw.signal,
@@ -173,6 +184,8 @@ impl RunOutcome {
                 involuntary_context_switches: raw.involuntary_context_switches,
                 block_input_ops: raw.block_input_ops,
                 block_output_ops: raw.block_output_ops,
+                peak_memory_bytes: raw.peak_memory_bytes,
+                peak_memory_source: raw.peak_memory_source,
             }),
             allocations: None,
             hardware: (raw.instructions_hw.is_some()
@@ -358,12 +371,30 @@ impl Measurement {
             ));
         }
 
-        metrics.push(Metric::bytes(
-            "peak_memory",
-            self.outcome.peak_rss_bytes,
-            MetricKind::Measured,
-            MetricMethod::Getrusage,
-        ));
+        // Peak memory carries the method that actually produced it, so the
+        // capsule never claims `getrusage` for a cgroup reading or the reverse.
+        // The name stays `peak_memory`; only the method varies by host, which
+        // is what the kind/method labels are for.
+        let cgroup_peak = self
+            .outcome
+            .resources
+            .as_ref()
+            .filter(|resources| resources.peak_memory_source.as_deref() == Some("cgroup"))
+            .and_then(|resources| resources.peak_memory_bytes);
+        metrics.push(match cgroup_peak {
+            Some(bytes) => Metric::bytes(
+                "peak_memory",
+                bytes,
+                MetricKind::Measured,
+                MetricMethod::Cgroup,
+            ),
+            None => Metric::bytes(
+                "peak_memory",
+                self.outcome.peak_rss_bytes,
+                MetricKind::Measured,
+                MetricMethod::Getrusage,
+            ),
+        });
 
         for (name, value) in [
             ("stdout_bytes", self.outcome.stdout_bytes),
@@ -935,6 +966,7 @@ mod tests {
             involuntary_context_switches: Some(0),
             block_input_ops: Some(0),
             block_output_ops: Some(0),
+            ..ResourceUsage::default()
         });
         let m = Measurement {
             outcome: run_outcome,
@@ -962,6 +994,7 @@ mod tests {
             involuntary_context_switches: Some(2),
             block_input_ops: Some(5),
             block_output_ops: Some(6),
+            ..ResourceUsage::default()
         });
         let metrics = Measurement {
             outcome,
@@ -997,6 +1030,69 @@ mod tests {
     }
 
     #[test]
+    fn peak_memory_method_names_the_source_the_runner_used() {
+        // Without a cgroup reading the runner reports getrusage.
+        let metrics = Measurement {
+            outcome: outcome(0, 0),
+            cachegrind: None,
+            allocations: None,
+            binary_size: None,
+            hardware: None,
+        }
+        .to_metrics();
+        let metric = metrics.iter().find(|m| m.name == "peak_memory").unwrap();
+        assert_eq!(metric.method, MetricMethod::Getrusage);
+        assert_eq!(metric.value, 1024.0);
+
+        // A cgroup high-water mark is reported as cgroup, not as getrusage.
+        let mut run_outcome = outcome(0, 0);
+        run_outcome.resources = Some(ResourceUsage {
+            peak_memory_bytes: Some(4096),
+            peak_memory_source: Some("cgroup".to_string()),
+            ..ResourceUsage::default()
+        });
+        let metrics = Measurement {
+            outcome: run_outcome,
+            cachegrind: None,
+            allocations: None,
+            binary_size: None,
+            hardware: None,
+        }
+        .to_metrics();
+        let metric = metrics.iter().find(|m| m.name == "peak_memory").unwrap();
+        assert_eq!(metric.method, MetricMethod::Cgroup);
+        assert_eq!(metric.value, 4096.0);
+        assert!(metric.machine_dependent());
+
+        // An explicit getrusage source keeps the getrusage method.
+        let mut run_outcome = outcome(0, 0);
+        run_outcome.resources = Some(ResourceUsage {
+            peak_memory_bytes: Some(1024),
+            peak_memory_source: Some("getrusage".to_string()),
+            ..ResourceUsage::default()
+        });
+        let metrics = Measurement {
+            outcome: run_outcome,
+            cachegrind: None,
+            allocations: None,
+            binary_size: None,
+            hardware: None,
+        }
+        .to_metrics();
+        let metric = metrics.iter().find(|m| m.name == "peak_memory").unwrap();
+        assert_eq!(metric.method, MetricMethod::Getrusage);
+    }
+
+    #[test]
+    fn verdict_carries_the_peak_memory_source() {
+        let line = r#"{"exit_status":0,"signal":0,"timed_out":false,"output_truncated":false,"peak_rss_bytes":1024,"wall_ns":2000,"stdout_bytes":0,"stderr_bytes":0,"peak_memory_bytes":8192,"peak_memory_source":"cgroup"}"#;
+        let o = RunOutcome::from_runner_json(line).unwrap();
+        let resources = o.resources.unwrap();
+        assert_eq!(resources.peak_memory_bytes, Some(8192));
+        assert_eq!(resources.peak_memory_source.as_deref(), Some("cgroup"));
+    }
+
+    #[test]
     fn simulated_and_measured_instruction_counts_coexist() {
         let mut run_outcome = outcome(0, 0);
         run_outcome.resources = Some(ResourceUsage {
@@ -1008,6 +1104,7 @@ mod tests {
             involuntary_context_switches: Some(0),
             block_input_ops: Some(0),
             block_output_ops: Some(0),
+            ..ResourceUsage::default()
         });
         let m = Measurement {
             outcome: run_outcome,

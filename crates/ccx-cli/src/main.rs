@@ -263,6 +263,17 @@ pub enum Command {
         /// Comparison capsule (the "after").
         b: PathBuf,
     },
+    /// Show the heap high-water mark and where the live bytes sit.
+    Memory {
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+        /// Named problem size to profile.
+        #[arg(long, default_value = "naive")]
+        size: String,
+        /// Seed for the generated input.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+    },
     /// Show the Pareto frontier over deterministic metrics across capsules.
     Pareto {
         /// Capsules to compare (two or more).
@@ -474,6 +485,7 @@ fn run(cli: &Cli) -> anyhow::Result<()> {
             flame,
         } => cmd::hotspot::run(cli.format, dir, size, *seed, flame.as_deref()),
         Command::Diff { a, b } => cmd::diff::run(cli.format, a, b),
+        Command::Memory { dir, size, seed } => cmd::memory::run(cli.format, dir, size, *seed),
         Command::Pareto { capsules, axes } => cmd::pareto::run(cli.format, capsules, axes),
         Command::Latency {
             capsules,

@@ -193,6 +193,15 @@ pub fn migrate_value(value: Value, from: u32) -> Result<Value, CapsuleError> {
                 value["schema_version"] = serde_json::json!(18);
                 version = 18;
             }
+            18 => {
+                // v18 -> v19: `peak_memory` may now be produced by the kernel
+                // cgroup high-water mark, so the `cgroup` metric method was
+                // introduced alongside `getrusage`. Older capsules recorded
+                // peak memory from `getrusage` only, and their existing method
+                // value stays correct, so the step only bumps the version.
+                value["schema_version"] = serde_json::json!(19);
+                version = 19;
+            }
             _ => {
                 return Err(CapsuleError::Invalid(format!(
                     "no migration path from schema_version {version}"
@@ -384,6 +393,26 @@ mod tests {
             migrate_value(serde_json::json!({"schema_version": 17, "metrics": []}), 17).unwrap();
         assert_eq!(migrated["schema_version"], CURRENT_SCHEMA_VERSION);
         assert!(migrated.get("timing").is_none());
+    }
+
+    #[test]
+    fn version_eighteen_keeps_a_getrusage_peak_memory_method() {
+        let migrated = migrate_value(
+            serde_json::json!({
+                "schema_version": 18,
+                "metrics": [{
+                    "name": "peak_memory",
+                    "kind": "measured",
+                    "method": "getrusage"
+                }]
+            }),
+            18,
+        )
+        .unwrap();
+        assert_eq!(migrated["schema_version"], CURRENT_SCHEMA_VERSION);
+        // The old method value is still the truth for an old capsule, so the
+        // step only advances the version rather than relabelling anything.
+        assert_eq!(migrated["metrics"][0]["method"], "getrusage");
     }
 
     #[test]

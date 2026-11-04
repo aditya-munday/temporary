@@ -1061,6 +1061,110 @@ callgrind_annotate --show=Ir --auto=yes --threshold=99{include_args} /work/scrat
         Ok((outcome.stdout, callgrind))
     }
 
+    /// Run the solution under Valgrind Massif and carry the profile file out.
+    ///
+    /// Massif is roughly fifty times slower than native, so the wall clock is
+    /// sized for the simulator. The heap profile is a measurement of the
+    /// program's own allocation stream, so it does not depend on the host's
+    /// timing, but the input and the binary are the same ones a measure run
+    /// would use, so the profile describes the same work.
+    pub fn profile_massif(
+        &self,
+        prog: &Program,
+        input: &[u8],
+        policy: &SandboxPolicy,
+    ) -> anyhow::Result<Option<String>> {
+        let input_dir = self.create_input_dir()?;
+        let result = self.profile_massif_in(prog, input, policy, &input_dir);
+        let _ = std::fs::remove_dir_all(&input_dir);
+        result
+    }
+
+    fn profile_massif_in(
+        &self,
+        prog: &Program,
+        input: &[u8],
+        policy: &SandboxPolicy,
+        input_dir: &Path,
+    ) -> anyhow::Result<Option<String>> {
+        std::fs::write(input_dir.join("stdin.txt"), input)?;
+
+        let mut mounts = self.source_mounts(&self.solution_source_paths());
+        mounts.push((
+            prog.host_dir.to_string_lossy().to_string(),
+            GUEST_PROG.to_string(),
+        ));
+        mounts.push((
+            input_dir.to_string_lossy().to_string(),
+            GUEST_INPUT.to_string(),
+        ));
+
+        let mut program_argv = String::new();
+        for arg in &self.sol.program_args {
+            program_argv.push(' ');
+            program_argv.push_str(&shell_quote(arg));
+        }
+
+        // `--detailed-freq=1 --max-snapshots` keeps every peak snapshot so the
+        // tree for the true high-water mark is available, not just a coarse
+        // sample. The byte totals do not depend on the time unit, so the
+        // instruction-unit default is fine and stays reproducible across hosts.
+        let script = format!(
+            "valgrind --tool=massif --detailed-freq=1 --max-snapshots=1000 \
+--massif-out-file=/work/scratch/massif.out \
+-- {binary}{program_argv} >/dev/null || exit $?",
+            binary = GUEST_PROG.to_string() + "/sol",
+        );
+
+        let mut run_policy = policy.clone();
+        run_policy.timeout_ms = policy.timeout_ms.saturating_mul(60).max(120_000);
+
+        let mut command: Vec<String> = vec!["/opt/ccx/runner".to_string()];
+        command.extend([
+            "--timeout-ms".to_string(),
+            run_policy.timeout_ms.to_string(),
+            "--memory-bytes".to_string(),
+            run_policy.memory_bytes.to_string(),
+            "--stack-bytes".to_string(),
+            "8388608".to_string(),
+            "--pids-limit".to_string(),
+            run_policy.pids_limit.to_string(),
+            "--max-output-bytes".to_string(),
+            (32 * 1024 * 1024u64).to_string(),
+            "--stdin".to_string(),
+            GUEST_STDIN.to_string(),
+            "--cwd".to_string(),
+            "/work/scratch".to_string(),
+            "--emit-file".to_string(),
+            "/work/scratch/massif.out".to_string(),
+            "--".to_string(),
+            "sh".to_string(),
+            "-eu".to_string(),
+            "-c".to_string(),
+            script,
+        ]);
+        let argv = run_policy.argv_mounted(&self.image, &command, &mounts);
+        let (_, stdout, stderr) = self.docker.run_bytes(&argv)?;
+        let (outcome, emitted) = ccx_core::engine::parse_framed_report_with_emit(&stdout)
+            .ok_or_else(|| {
+                Fixable::new(format!(
+                    "the memory profiler produced no usable report\n\nstderr:\n{}",
+                    String::from_utf8_lossy(&stderr)
+                ))
+                .fix("run `ccx doctor` and confirm the pinned image contains Valgrind")
+                .into_error()
+            })?;
+        if outcome.exit_status != 0 {
+            return Err(Fixable::new(format!(
+                "memory profiling failed (exit {})\n\n{}",
+                outcome.exit_status, outcome.stderr
+            ))
+            .fix("run `ccx asm` and `ccx run` first to check the solution itself")
+            .into_error());
+        }
+        Ok(emitted.and_then(|bytes| String::from_utf8(bytes).ok()))
+    }
+
     pub fn build_solution_timed(&self) -> anyhow::Result<(Program, BuildTiming)> {
         let dir = self.scratch_dir().join("sol");
         if self.sol.build_system == BuildSystem::Custom {

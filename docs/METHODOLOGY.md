@@ -11,7 +11,7 @@ counters carry process and host variation.
 | `instructions`, cache misses, branch misses, memory references, branch instructions, and miss rates | simulated | Cachegrind | Deterministic model counts for the same binary and input; every run pins I1/D1 to 32 KiB, 8-way, 64-byte lines; cache misses are the sum of I1 and D1 misses, while host-detected LL misses are not emitted |
 | `allocations`, `allocated_bytes` | measured | Valgrind Memcheck xtree | Main process heap blocks and requested bytes; forked and exec'd child profiles are not aggregated |
 | `binary_size` | measured | filesystem stat | Size of the rebuilt executable |
-| `peak_memory` | indicative | `getrusage` | Host and runtime dependent peak resident memory |
+| `peak_memory` | indicative | cgroup, else `getrusage` | Peak memory charged to the run. The runner reports the kernel cgroup high-water mark (`memory.peak` on cgroup v2, `memory.max_usage_in_bytes` on v1) when the host exposes one and it covers the run; otherwise it falls back to `getrusage` peak RSS. The capsule's method names which source produced the number, so the two are never conflated |
 | `wall_clock` | indicative | runner monotonic clock | Candidate process wall time including output collection |
 | `reference_wall_clock` | indicative | runner monotonic clock | C++ `reference.cpp` process wall time paired with the candidate |
 | `paired_speedup_ratio` | indicative | paired wall-clock samples | Per-pair reference duration divided by candidate duration; above 1 means the candidate was faster on that pair |
@@ -184,6 +184,22 @@ and wrong in parallel. Speed-up is a ratio of whole-process wall times and is
 therefore `indicative`; a serial solution produces a flat curve, which is the
 correct and expected result rather than a failure.
 
+`ccx memory` reports the two memory numbers separately, because they answer
+different questions. Peak memory is `indicative`: it is the kernel cgroup
+high-water mark when the host exposes one that covers the run, otherwise
+`getrusage` peak RSS, and the report names the source. Both count every page the
+process touched, including allocator and loader reservations, and vary with the
+host. The live-heap high-water mark comes from
+Valgrind Massif and is `measured`: it is the maximum of the program's own live
+allocation bytes, deterministic for a fixed input, and it is decomposed into
+allocation sites and power-of-two size classes so the peak can be attributed
+rather than only totalled. Massif instruments the program, so it runs far slower
+than the ordinary measurement path; the command says so when the profile cannot
+be carried out, and a zero high-water mark is reported as a real result for a
+program that never allocates. Massif groups by allocation site, not by size
+class; the histogram is derived from the sites' leaf blocks, so a site that
+holds blocks in several classes appears in each.
+
 `ccx diff` calls metric changes conclusive only when both capsules record the
 same input bytes, problem definition, language, compiler profile and environment,
 execution target, runtime arguments and environment, stack limit, and measurement
@@ -296,7 +312,8 @@ vendor-specific event set, not by this one. The LLC counter stands in for the
 outermost cache level.
 
 The Linux runner records `getrusage` CPU time, page faults, context switches,
-block-I/O operations, and peak RSS for the direct child process. It does not
+block-I/O operations, and peak RSS for the direct child process, plus the
+kernel cgroup memory high-water mark when the host exposes one. It does not
 attribute all activity from detached descendants or report bytes read from
 stdin, file-level I/O latency, network latency, or a live CPU-frequency time
 series. When hardware cycle events are available, the capsule includes an

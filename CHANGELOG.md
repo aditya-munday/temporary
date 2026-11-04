@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+- Read peak memory from the cgroup high-water mark when the kernel exposes one
+  that covers the run, falling back to `getrusage` peak RSS otherwise (schema
+  19). The runner reads `memory.peak` (cgroup v2) or `memory.max_usage_in_bytes`
+  (v1) around the child, rejects a reading that a host-scoped cgroup already
+  reached before the run, and records which source produced the number as
+  `peak_memory_source`. The `peak_memory` metric keeps its name and gains a
+  `cgroup` method alongside `getrusage`, so a capsule never labels a kernel
+  accounting number as a process RSS number or the reverse. Both remain
+  `indicative` and outside the deterministic match. Schema 19 adds only the new
+  method value; an old capsule keeps the `getrusage` method that actually
+  produced its number.
+
 - Add `ccx latency`, which surfaces the orphaned latency-statistics core. It
   reads the raw wall-clock samples a capsule records and reports the distribution
   its median and spread hide: min, median, mean, max, standard deviation,
