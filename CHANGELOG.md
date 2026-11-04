@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+- Make the measurement trust contract mechanical, not aspirational (Part 1).
+  The five metric kinds — `measured`, `simulated`, `indicative`, `predicted`,
+  and the absence outcome `unavailable` — now live as data in
+  `ccx-core::trust` (`KIND_SPECS`, `PRINCIPLES`, `check_invariants`), the same
+  data the tests assert, so the taxonomy cannot drift from the code that
+  enforces it. `ccx principles` prints it and `ccx principles --check` exits
+  non-zero when an invariant is violated; CI runs the check as the Part 1 gate.
+  `predicted` (schema 20) is the kind for a static model of code that never ran,
+  and `llvm-mca` its method, so `ccx throughput` can name what it does without
+  borrowing the word "measured". The ranking rule is decided in one place
+  (`Metric::rankable_kind` + `ranking_eligibility`): only `measured` and
+  `simulated` may rank, and a `predicted` or `indicative` entry is refused with
+  a reason. Schema 20 adds only the two new enum values; an old capsule's
+  `kind`/`method` labels still parse and are not rewritten.
+
 - Add `ccx topdown`, the top-down microarchitecture breakdown (C11). It runs the
   solution under `perf stat --topdown` and reports the four level-one buckets —
   retiring, bad speculation, front-end bound, back-end bound — whose fractions

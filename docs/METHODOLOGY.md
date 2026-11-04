@@ -6,6 +6,15 @@ number means; the method identifies the instrument that produced it.
 stable across machines or protected from a hostile process; Linux `getrusage`
 counters carry process and host variation.
 
+There are five kinds in all: `measured`, `simulated`, `indicative`, `predicted`,
+and the absence outcome `unavailable`. `unavailable` is not a stored kind but
+the absence of a metric: a value that was not produced is reported as
+unavailable with the reason, never as `0`. `predicted` is a static model of code
+that never ran (the `llvm-mca` throughput report); it is deterministic but is
+never a ranking signal. Only `measured` and `simulated` may rank. The canonical
+description of every kind, and the invariants that keep them honest, live in
+`ccx-core::trust` and are printed by `ccx principles`.
+
 | Metric | Kind | Method | Interpretation |
 | --- | --- | --- | --- |
 | `instructions`, cache misses, branch misses, memory references, branch instructions, and miss rates | simulated | Cachegrind | Deterministic model counts for the same binary and input; every run pins I1/D1 to 32 KiB, 8-way, 64-byte lines; cache misses are the sum of I1 and D1 misses, while host-detected LL misses are not emitted |
