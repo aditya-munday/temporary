@@ -2,18 +2,6 @@
 
 ## [Unreleased]
 
-- Add two hostile cases to the sandbox suite (Group F1), both named in the
-  Phase 1 brief and previously untested end to end. `signal_trick` sends
-  `SIGKILL`, `SIGSTOP`, `SIGSEGV`, and friends to the runner (its parent, PID 1
-  of the container) and asserts the runner survives and still frames a verdict;
-  Linux discards signals to a namespace's init from inside that namespace unless
-  the sender has `CAP_KILL`, which the sandbox drops. `output_forgery` prints the
-  runner's own framing sentinel (`CCX-OUT`/`CCX-ERR`/`CCX-ALLOC`/`CCX-EMIT`/
-  `CCX-VERDICT`) and exits 7, and asserts the engine still reports the real
-  status: the child's bytes are consumed inside the length-framed `CCX-OUT`
-  section, so they can never be read as the verdict. Both cases are wired into
-  `scripts/safety-suite.sh` (now 17 cases) and `SECURITY.md`.
-
 - Make the measurement trust contract mechanical, not aspirational (Part 1).
   The five metric kinds — `measured`, `simulated`, `indicative`, `predicted`,
   and the absence outcome `unavailable` — now live as data in
@@ -114,12 +102,16 @@
   without checking it was an object. `migrate.rs` now uses total `get`/`set`
   accessors, so a malformed document is a typed error, never a panic.
 
-- Widen the hostile suite from eight cases to fifteen. New cases cover a
+- Widen the hostile suite from eight cases to seventeen. New cases cover a
   spawning tree, descriptor exhaustion, a scratch symlink pointing at a host
   path, `/proc` escape hatches and raw kernel memory, `ptrace`, clock tampering,
-  and stderr flooding. `scripts/safety-suite.sh` runs all fifteen against the
-  real pinned image and asserts containment by reason; all fifteen pass on the
-  x86-64 Linux host.
+  stderr flooding, signal tricks (a child sending `SIGKILL`/`SIGSTOP`/`SIGSEGV`
+  to the runner, which is PID 1 and survives because the sandbox drops
+  `CAP_KILL`), and output forgery (a child printing the runner's own
+  `CCX-VERDICT` framing, which the length-framed report traps inside the
+  `CCX-OUT` section so the real status still wins). `scripts/safety-suite.sh`
+  runs all seventeen against the real pinned image and asserts containment by
+  reason.
 
 - Name the planned language slots honestly. The capability matrix now lists Nim,
   Ada, Fortran, and ARM64 assembly as `planned` rows with every capability `no`,
