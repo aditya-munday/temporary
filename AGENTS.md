@@ -299,6 +299,14 @@ image needs a C compiler (all three have one).
   high-water mark when the host exposes one that covers the run, else
   `getrusage` peak RSS, `indicative`) and the Valgrind Massif live-heap
   high-water mark (`measured`, decomposed by allocation site and size class).
+- `ccx topdown` — where the issue slots went, from `perf stat --topdown`: the
+  four level-one buckets (retiring, bad speculation, front-end bound, back-end
+  bound), `measured` and machine-dependent, never a ranking signal. A host whose
+  PMU refuses the events reports `unavailable` with perf's own diagnostic.
+- `ccx throughput` — the static throughput `llvm-mca` predicts for the measured
+  assembly: modelled cycles, IPC, uOps/cycle, dispatch width, block
+  rthroughput, and resource pressure busiest-first. `predicted`, never a
+  measurement or a ranking signal, and always names the modelled CPU.
 - `ccx init`, `ccx asm`, `ccx diff`, `ccx matrix`, `ccx pareto`,
   `ccx experiment`, `ccx validate`, `ccx doctor` — see `ccx --help`.
 
@@ -456,7 +464,7 @@ Hard-won facts, each of which was a real bug:
 
 - `cargo fmt --all -- --check`: clean.
 - `cargo clippy --workspace --all-targets -- -D warnings`: clean.
-- `cargo test --workspace --release`: 263 tests pass (179 core + 78 CLI + 6
+- `cargo test --workspace --release`: 277 tests pass (193 core + 78 CLI + 6
   integration), 1 ignored. `capsule_robustness.rs` adds the parser fuzz and
   migration-path tests.
 - `python3 -m unittest scripts/test_compare_capsules.py`: 22 tests pass.
