@@ -17,8 +17,8 @@ use ccx_core::capsule::repeatability::{ranking_eligibility, RankingEligibility};
 use ccx_core::capsule::{
     fixed_env_map, hash_source_files, Build, Capsule, Harness, InputSpec, Metric, MetricKind,
     MetricMethod, NoiseCanary, ProblemRef, ReferenceBuild, Repeatability, SeedSet, SourceRef,
-    Spread, Toolchain, UncertaintyKind, Verdict, CURRENT_SCHEMA_VERSION, DEFAULT_BUILD_REPEAT,
-    HARNESS_VERSION, NOISE_CANARY_WORKLOAD,
+    Spread, TimingDiagnostic, Toolchain, UncertaintyKind, Verdict, CURRENT_SCHEMA_VERSION,
+    DEFAULT_BUILD_REPEAT, HARNESS_VERSION, NOISE_CANARY_WORKLOAD,
 };
 use ccx_core::engine::Measurement;
 use ccx_core::explain::{self, Hint, Ruleset};
@@ -47,6 +47,10 @@ pub struct MeasureReport {
     /// whether a reader should trust the indicative numbers.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub noise_canary: Option<NoiseCanary>,
+    /// Wall-clock outlier flags and warm-up convergence. Advisory, like the
+    /// canary: it describes the indicative samples without changing them.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub timing: Option<TimingDiagnostic>,
     pub metrics: Vec<MetricSummary>,
     pub hints: Vec<Hint>,
 }
@@ -278,6 +282,17 @@ pub fn measure_solution(
         )),
     };
 
+    // Classify the indicative wall-clock samples and record warm-up evidence.
+    // Advisory, like the canary: the flags never change a metric, a rank, or a
+    // verdict, they only tell a reader which runs were noise and whether the
+    // host had settled when sampling began. The evidence is derived from the
+    // samples already recorded, so it adds no runs and changes no measurement.
+    let wall_samples: Vec<u64> = samples
+        .get("wall_clock")
+        .map(|values| values.iter().map(|value| *value as u64).collect())
+        .unwrap_or_default();
+    let timing = (!wall_samples.is_empty()).then(|| TimingDiagnostic::analyse(&wall_samples));
+
     // A single run has no spread; recording the run count is more honest than
     // reporting a zero-width interval.
     let mut metrics = measurement.to_metrics();
@@ -481,6 +496,7 @@ pub fn measure_solution(
         metrics,
         applied_tolerance,
         noise_canary,
+        timing,
         repeatability,
         build_repeatability,
     };
@@ -527,6 +543,7 @@ pub fn measure_solution(
         repeatability: capsule.repeatability.clone(),
         build_repeatability: capsule.build_repeatability.clone(),
         noise_canary: capsule.noise_canary.clone(),
+        timing: capsule.timing.clone(),
         metrics: capsule
             .metrics
             .iter()
@@ -587,6 +604,28 @@ pub fn emit_report(format: Format, problem: &str, report: &MeasureReport) -> any
                 );
             }
             println!("  runs      {}", report.runs);
+            if let Some(timing) = &report.timing {
+                let warm_up = if timing.warm_up.leading_slow_runs == 0
+                    && timing.warm_up.first_run_penalty_pct < 1.0
+                {
+                    "host settled from the first run".to_string()
+                } else {
+                    format!(
+                        "{} leading slow run(s), first run +{:.1}% vs median",
+                        timing.warm_up.leading_slow_runs, timing.warm_up.first_run_penalty_pct
+                    )
+                };
+                if timing.outlier_runs.is_empty() {
+                    println!("  timing    0 outliers | {}", warm_up);
+                } else {
+                    println!(
+                        "  timing    {} outlier(s) at run(s) {:?} | {}",
+                        timing.outlier_runs.len(),
+                        timing.outlier_runs,
+                        warm_up
+                    );
+                }
+            }
             if let Some(canary) = &report.noise_canary {
                 match canary.status.as_str() {
                     "stable" => println!(

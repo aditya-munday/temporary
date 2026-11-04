@@ -8,6 +8,7 @@ pub mod doctor;
 pub mod experiment;
 pub mod hotspot;
 pub mod init;
+pub mod latency;
 pub mod matrix;
 pub mod measure;
 pub mod pareto;
@@ -15,6 +16,7 @@ pub mod profiles;
 pub mod repeat;
 pub mod replay;
 pub mod run;
+pub mod scaling;
 pub mod test;
 pub mod validate;
 

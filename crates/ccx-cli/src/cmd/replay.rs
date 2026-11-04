@@ -179,6 +179,31 @@ pub fn compare(recorded: &Capsule, replay: &[Metric], replay_host: &str) -> Repl
     }
 }
 
+/// Advisory notes describing the original measurement's wall-clock timing, so a
+/// reader can tell a settled host from a noisy one. They never change a metric,
+/// a rank, or a verdict.
+fn timing_notes(recorded: &Capsule) -> Vec<String> {
+    let Some(timing) = &recorded.timing else {
+        return Vec::new();
+    };
+    let mut notes = Vec::new();
+    if timing.warm_up.leading_slow_runs > 0 {
+        notes.push(format!(
+            "the original measurement's host had not settled: {} leading slow wall-clock run(s), the first {}% above the median; its indicative numbers may be noisy",
+            timing.warm_up.leading_slow_runs,
+            timing.warm_up.first_run_penalty_pct.round()
+        ));
+    }
+    if !timing.outlier_runs.is_empty() {
+        notes.push(format!(
+            "the original measurement flagged {} wall-clock outlier(s) at run(s) {:?}; they are advisory and do not affect the deterministic metrics",
+            timing.outlier_runs.len(),
+            timing.outlier_runs
+        ));
+    }
+    notes
+}
+
 fn verify_toolchain_environment(
     current: &ccx_core::toolchain::Toolchain,
     recorded: &ccx_core::capsule::Toolchain,
@@ -580,6 +605,9 @@ pub fn run(
             _ => {}
         }
     }
+    for note in timing_notes(&recorded) {
+        report.environment_notes.push(note);
+    }
 
     cmd::emit(
         format,
@@ -708,6 +736,7 @@ fn replay_build_timing_samples(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use ccx_core::capsule::TimingDiagnostic;
 
     #[test]
     fn machine_dependent_os_drift_does_not_break_deterministic_replay() {
@@ -943,5 +972,41 @@ mod tests {
             hardware.note.as_deref(),
             Some("machine-dependent metric is unavailable on this host")
         );
+    }
+
+    #[test]
+    fn a_settled_host_produces_no_timing_notes() {
+        let source = include_str!("../../../ccx-core/tests/fixtures/capsule-v15.json");
+        let mut recorded = Capsule::from_json(source).unwrap();
+        recorded.timing = Some(TimingDiagnostic::analyse(&[1000, 1010, 1005, 1008]));
+        assert!(timing_notes(&recorded).is_empty());
+    }
+
+    #[test]
+    fn leading_slow_runs_and_outliers_are_reported_as_advisory_notes() {
+        let source = include_str!("../../../ccx-core/tests/fixtures/capsule-v15.json");
+        let mut recorded = Capsule::from_json(source).unwrap();
+        // Two slow leading runs (each above twice the 1,000 ns median) then
+        // settled runs; both leading runs are flagged slow outliers.
+        recorded.timing = Some(TimingDiagnostic::analyse(&[
+            5000, 4000, 1000, 1000, 1000, 1000, 1000,
+        ]));
+        let notes = timing_notes(&recorded);
+        assert_eq!(notes.len(), 2, "{notes:?}");
+        assert!(
+            notes[0].contains("2 leading slow wall-clock run(s)"),
+            "{notes:?}"
+        );
+        assert!(notes[0].contains("400% above the median"), "{notes:?}");
+        assert!(notes[1].contains("2 wall-clock outlier(s)"), "{notes:?}");
+        assert!(notes[1].contains("advisory"), "{notes:?}");
+    }
+
+    #[test]
+    fn a_capsule_without_timing_produces_no_notes() {
+        let source = include_str!("../../../ccx-core/tests/fixtures/capsule-v15.json");
+        let recorded = Capsule::from_json(source).unwrap();
+        assert!(recorded.timing.is_none());
+        assert!(timing_notes(&recorded).is_empty());
     }
 }

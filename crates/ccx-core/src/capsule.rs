@@ -13,7 +13,7 @@ pub mod migrate;
 pub mod repeatability;
 
 /// The schema version this build writes.
-pub const CURRENT_SCHEMA_VERSION: u32 = 17;
+pub const CURRENT_SCHEMA_VERSION: u32 = 18;
 pub const LEGACY_BINARY_DIGEST_UNAVAILABLE: &str = "unavailable_legacy";
 pub const DEFAULT_BUILD_REPEAT: u32 = 3;
 
@@ -21,6 +21,12 @@ pub const DEFAULT_BUILD_REPEAT: u32 = 3;
 pub const HARNESS_VERSION: &str = "0.19.0";
 /// Stable identifier of the fixed host-noise canary workload.
 pub const NOISE_CANARY_WORKLOAD: &str = "ccx-canary-v1";
+/// Outlier flag: a sample is *slow* when it exceeds the median by this factor.
+pub const TIMING_SLOW_OUTLIER_FACTOR: f64 = 2.0;
+/// Outlier flag: a sample is *fast* when it falls below the median by this
+/// factor. A too-fast run usually means the work was skipped or the clock was
+/// perturbed, so it is flagged rather than trusted.
+pub const TIMING_FAST_OUTLIER_FACTOR: f64 = 0.5;
 
 /// Hostname forced on every measured container.
 ///
@@ -612,6 +618,133 @@ pub fn relative_drift_pct(before: f64, after: f64) -> f64 {
     (before - after).abs() / smaller * 100.0
 }
 
+/// One wall-clock observation, kept with its run index so the reader can see
+/// *which* run was slow rather than only that one was.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TimingObservation {
+    /// Zero-based index of this run within the measured sequence.
+    pub run: u32,
+    /// Wall clock for this run, in nanoseconds.
+    pub wall_ns: f64,
+    /// `true` when this sample was flagged as an outlier against the median.
+    pub outlier: bool,
+    /// `slow` or `fast` when `outlier` is set; absent otherwise.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub direction: Option<String>,
+}
+
+/// Warm-up evidence, derived from the leading wall-clock samples.
+///
+/// The first runs of a fresh container are usually slower while caches and CPU
+/// frequency settle. Rather than run extra unrecorded samples, the diagnostic
+/// looks at the samples it already has: how many leading runs were slow
+/// outliers, and how much the very first run cost above the median.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct WarmUp {
+    /// Number of leading runs, from the first, that were flagged as slow
+    /// outliers. A nonzero value is evidence the host had not settled when
+    /// sampling began.
+    pub leading_slow_runs: u32,
+    /// The first run's wall clock as a percentage above the median; zero when
+    /// the first run was at or below the median.
+    pub first_run_penalty_pct: f64,
+}
+
+/// Wall-clock diagnostics: outlier flags and warm-up evidence.
+///
+/// These describe the *indicative* wall-clock samples only. They never change a
+/// deterministic metric, a rank, or a verdict; they exist so a reader can tell a
+/// settled host from a noisy one and see which runs were discarded as noise.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[serde(deny_unknown_fields)]
+pub struct TimingDiagnostic {
+    /// Every candidate wall-clock sample, with its run index and outlier flag.
+    pub samples: Vec<TimingObservation>,
+    /// Run indices flagged as outliers, in order.
+    pub outlier_runs: Vec<u32>,
+    /// Median of the samples *with outliers removed*; `None` when removing
+    /// every flagged sample would leave too few to summarize.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trimmed_median_ns: Option<f64>,
+    /// The factor above the median at which a sample is flagged *slow*.
+    pub slow_factor: f64,
+    /// The factor below the median at which a sample is flagged *fast*.
+    pub fast_factor: f64,
+    /// Warm-up evidence derived from the leading samples.
+    pub warm_up: WarmUp,
+}
+
+impl TimingDiagnostic {
+    /// Classify wall-clock samples: flag slow/fast outliers against the median,
+    /// report a trimmed median, and summarize warm-up evidence.
+    ///
+    /// The classification is deterministic and order-independent, so replaying
+    /// the same samples reproduces the same flags.
+    pub fn analyse(samples: &[u64]) -> Self {
+        let values: Vec<f64> = samples.iter().map(|v| *v as f64).collect();
+        let median = repeatability::median(&values).unwrap_or(0.0);
+        let slow_at = median * TIMING_SLOW_OUTLIER_FACTOR;
+        let fast_at = median * TIMING_FAST_OUTLIER_FACTOR;
+        let observations: Vec<TimingObservation> = values
+            .iter()
+            .enumerate()
+            .map(|(run, wall_ns)| {
+                let direction = if median > 0.0 && *wall_ns > slow_at {
+                    Some("slow")
+                } else if median > 0.0 && *wall_ns < fast_at {
+                    Some("fast")
+                } else {
+                    None
+                };
+                TimingObservation {
+                    run: run as u32,
+                    wall_ns: *wall_ns,
+                    outlier: direction.is_some(),
+                    direction: direction.map(str::to_string),
+                }
+            })
+            .collect();
+        let outlier_runs: Vec<u32> = observations
+            .iter()
+            .filter(|observation| observation.outlier)
+            .map(|observation| observation.run)
+            .collect();
+        // Only trim when enough clean samples remain to be a median rather than
+        // a single value in disguise.
+        let kept: Vec<f64> = observations
+            .iter()
+            .filter(|observation| !observation.outlier)
+            .map(|observation| observation.wall_ns)
+            .collect();
+        let trimmed_median_ns = (kept.len() >= 3)
+            .then(|| repeatability::median(&kept))
+            .flatten();
+        let leading_slow_runs = observations
+            .iter()
+            .take_while(|observation| observation.direction.as_deref() == Some("slow"))
+            .count() as u32;
+        let first_run_penalty_pct = if median > 0.0 {
+            let first = observations.first().map(|o| o.wall_ns).unwrap_or(0.0);
+            ((first - median) / median * 100.0).max(0.0)
+        } else {
+            0.0
+        };
+        TimingDiagnostic {
+            samples: observations,
+            outlier_runs,
+            trimmed_median_ns,
+            slow_factor: TIMING_SLOW_OUTLIER_FACTOR,
+            fast_factor: TIMING_FAST_OUTLIER_FACTOR,
+            warm_up: WarmUp {
+                leading_slow_runs,
+                first_run_penalty_pct,
+            },
+        }
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 #[serde(deny_unknown_fields)]
 pub struct Capsule {
@@ -634,6 +767,8 @@ pub struct Capsule {
     pub applied_tolerance: Option<AppliedTolerance>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub noise_canary: Option<NoiseCanary>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub timing: Option<TimingDiagnostic>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub repeatability: Option<Repeatability>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -963,6 +1098,119 @@ impl Capsule {
                         canary.status, canary.drift_pct
                     )));
                 }
+            }
+        }
+
+        if let Some(timing) = &self.timing {
+            if timing.samples.is_empty() {
+                return Err(CapsuleError::Invalid(
+                    "timing diagnostics must record at least one sample".into(),
+                ));
+            }
+            if !timing.slow_factor.is_finite()
+                || !timing.fast_factor.is_finite()
+                || timing.slow_factor <= 0.0
+                || timing.fast_factor <= 0.0
+                || timing.fast_factor >= timing.slow_factor
+            {
+                return Err(CapsuleError::Invalid(
+                    "timing diagnostics have invalid outlier factors".into(),
+                ));
+            }
+            // The samples are a run-indexed sequence, so the run numbers must be
+            // exactly 0..n with no gaps and no repeats.
+            for (index, observation) in timing.samples.iter().enumerate() {
+                let direction_ok = match observation.direction.as_deref() {
+                    None => !observation.outlier,
+                    Some("slow") | Some("fast") => observation.outlier,
+                    Some(_) => false,
+                };
+                if observation.run != index as u32
+                    || !observation.wall_ns.is_finite()
+                    || observation.wall_ns < 0.0
+                    || !direction_ok
+                {
+                    return Err(CapsuleError::Invalid(
+                        "timing diagnostics have an invalid sample".into(),
+                    ));
+                }
+            }
+            // The flag list must be exactly the flagged samples, in order.
+            let expected_outliers: Vec<u32> = timing
+                .samples
+                .iter()
+                .filter(|observation| observation.outlier)
+                .map(|observation| observation.run)
+                .collect();
+            if timing.outlier_runs != expected_outliers {
+                return Err(CapsuleError::Invalid(
+                    "timing outlier_runs disagrees with the flagged samples".into(),
+                ));
+            }
+            // A recorded outlier must follow from the median and the factors,
+            // so the flags cannot be arbitrary.
+            let values: Vec<f64> = timing
+                .samples
+                .iter()
+                .map(|observation| observation.wall_ns)
+                .collect();
+            let median = repeatability::median(&values).unwrap_or(0.0);
+            for observation in &timing.samples {
+                let expected = if median > 0.0 && observation.wall_ns > median * timing.slow_factor
+                {
+                    Some("slow")
+                } else if median > 0.0 && observation.wall_ns < median * timing.fast_factor {
+                    Some("fast")
+                } else {
+                    None
+                };
+                if observation.direction.as_deref() != expected {
+                    return Err(CapsuleError::Invalid(
+                        "timing outlier flag does not follow from its median and factors".into(),
+                    ));
+                }
+            }
+            if timing
+                .trimmed_median_ns
+                .is_some_and(|value| !value.is_finite() || value < 0.0)
+            {
+                return Err(CapsuleError::Invalid(
+                    "timing trimmed_median_ns is not a valid duration".into(),
+                ));
+            }
+            let warm_up = &timing.warm_up;
+            if warm_up.leading_slow_runs as usize > timing.samples.len()
+                || !warm_up.first_run_penalty_pct.is_finite()
+                || warm_up.first_run_penalty_pct < 0.0
+            {
+                return Err(CapsuleError::Invalid(
+                    "timing warm_up record is inconsistent".into(),
+                ));
+            }
+            // The leading-slow-run count must be exactly the run of slow flags
+            // at the start of the sequence, so it cannot be arbitrary.
+            let expected_leading = timing
+                .samples
+                .iter()
+                .take_while(|observation| observation.direction.as_deref() == Some("slow"))
+                .count() as u32;
+            if warm_up.leading_slow_runs != expected_leading {
+                return Err(CapsuleError::Invalid(
+                    "timing warm_up leading_slow_runs disagrees with the samples".into(),
+                ));
+            }
+            // The first-run penalty must follow from the first sample and the
+            // median, so it cannot be arbitrary either.
+            let expected_penalty = if median > 0.0 {
+                let first = timing.samples.first().map(|o| o.wall_ns).unwrap_or(0.0);
+                ((first - median) / median * 100.0).max(0.0)
+            } else {
+                0.0
+            };
+            if (warm_up.first_run_penalty_pct - expected_penalty).abs() > 1e-9 {
+                return Err(CapsuleError::Invalid(
+                    "timing warm_up first_run_penalty_pct disagrees with the samples".into(),
+                ));
             }
         }
 
@@ -1910,5 +2158,89 @@ mod tests {
         })
         .validate()
         .is_err());
+    }
+
+    #[test]
+    fn timing_flags_slow_and_fast_outliers_against_the_median() {
+        // Median 100; 500 is >2x (slow), 40 is <0.5x (fast).
+        let diagnostic = TimingDiagnostic::analyse(&[100, 100, 100, 500, 40]);
+        assert_eq!(diagnostic.outlier_runs, vec![3, 4]);
+        assert_eq!(diagnostic.samples[3].direction.as_deref(), Some("slow"));
+        assert_eq!(diagnostic.samples[4].direction.as_deref(), Some("fast"));
+        assert!(diagnostic.samples[0].direction.is_none());
+        // The trimmed median drops the outliers and keeps the clean samples.
+        assert_eq!(diagnostic.trimmed_median_ns, Some(100.0));
+    }
+
+    #[test]
+    fn timing_trims_only_when_enough_clean_samples_remain() {
+        // Two clean samples are too few to call a trimmed median a median.
+        let diagnostic = TimingDiagnostic::analyse(&[100, 100, 10_000]);
+        assert_eq!(diagnostic.outlier_runs, vec![2]);
+        assert_eq!(diagnostic.trimmed_median_ns, None);
+    }
+
+    #[test]
+    fn warm_up_counts_only_leading_slow_runs() {
+        // 10000 and 10000 are leading slow runs; the later 10000 is slow too but
+        // not leading, so it does not count toward warm-up.
+        let diagnostic = TimingDiagnostic::analyse(&[10_000, 10_000, 100, 100, 100, 100, 10_000]);
+        assert_eq!(diagnostic.outlier_runs, vec![0, 1, 6]);
+        assert_eq!(diagnostic.warm_up.leading_slow_runs, 2);
+        // The first run is 9900% above the median of 100.
+        assert!((diagnostic.warm_up.first_run_penalty_pct - 9900.0).abs() < 1e-6);
+
+        // A settled series has no leading slow runs and no first-run penalty.
+        let settled = TimingDiagnostic::analyse(&[100, 101, 99, 100]);
+        assert_eq!(settled.warm_up.leading_slow_runs, 0);
+        assert_eq!(settled.warm_up.first_run_penalty_pct, 0.0);
+    }
+
+    #[test]
+    fn timing_validation_rejects_inconsistent_records() {
+        let capsule =
+            Capsule::from_json(include_str!("../tests/fixtures/capsule-v15.json")).unwrap();
+        let with_timing = |timing: TimingDiagnostic| {
+            let mut candidate = capsule.clone();
+            candidate.timing = Some(timing);
+            candidate.seal().unwrap();
+            candidate
+        };
+
+        // A well-formed diagnostic is accepted.
+        let valid = with_timing(TimingDiagnostic::analyse(&[100, 100, 100, 500, 40]));
+        assert!(valid.validate().is_ok(), "{:?}", valid.validate());
+
+        // A flag that does not follow from the median is rejected.
+        let mut bogus = TimingDiagnostic::analyse(&[100, 100, 100, 500]);
+        bogus.samples[0].outlier = true;
+        bogus.samples[0].direction = Some("slow".into());
+        bogus.outlier_runs = vec![0, 3];
+        assert!(with_timing(bogus).validate().is_err());
+
+        // An outlier_runs list that disagrees with the samples is rejected.
+        let mut mismatched = TimingDiagnostic::analyse(&[100, 100, 100, 500]);
+        mismatched.outlier_runs = vec![];
+        assert!(with_timing(mismatched).validate().is_err());
+
+        // A run index that is out of order is rejected.
+        let mut disordered = TimingDiagnostic::analyse(&[100, 100, 100, 500]);
+        disordered.samples[1].run = 9;
+        assert!(with_timing(disordered).validate().is_err());
+
+        // An unknown direction is rejected.
+        let mut unknown = TimingDiagnostic::analyse(&[100, 100, 100, 500]);
+        unknown.samples[3].direction = Some("sideways".into());
+        assert!(with_timing(unknown).validate().is_err());
+
+        // A leading-slow-run count that disagrees with the flags is rejected.
+        let mut wrong_warm_up = TimingDiagnostic::analyse(&[10_000, 100, 100, 100]);
+        wrong_warm_up.warm_up.leading_slow_runs = 3;
+        assert!(with_timing(wrong_warm_up).validate().is_err());
+
+        // A first-run penalty that disagrees with the samples is rejected.
+        let mut wrong_penalty = TimingDiagnostic::analyse(&[100, 100, 100, 100]);
+        wrong_penalty.warm_up.first_run_penalty_pct = 5.0;
+        assert!(with_timing(wrong_penalty).validate().is_err());
     }
 }

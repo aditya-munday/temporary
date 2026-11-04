@@ -272,6 +272,43 @@ pub enum Command {
         #[arg(long = "axis")]
         axes: Vec<String>,
     },
+    /// Show the wall-clock distribution behind one or more capsules.
+    Latency {
+        /// Capsules to summarize (one or more).
+        capsules: Vec<PathBuf>,
+        /// Duration metric to summarize. Defaults to `wall_clock`.
+        #[arg(long, default_value = "wall_clock")]
+        metric: String,
+        /// Percentile level as a fraction in (0, 1); repeatable. Defaults to
+        /// p50, p90, p95, p99, and p99.9.
+        #[arg(long = "level")]
+        levels: Vec<String>,
+    },
+    /// Sweep thread counts and report speed-up and efficiency.
+    Scaling {
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+        /// Named problem size to run.
+        #[arg(long, default_value = "naive")]
+        size: String,
+        /// Seed for the generated input.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+        /// Thread counts to run, comma-separated. Defaults to powers of two up
+        /// to the host's logical CPU count.
+        #[arg(long)]
+        threads: Option<String>,
+        /// Runs per thread count; the median is reported.
+        #[arg(long, default_value_t = 5)]
+        repeat: u32,
+        /// Environment variable that selects the thread count.
+        #[arg(long = "thread-env", default_value = "OMP_NUM_THREADS")]
+        thread_env: String,
+        /// Fraction of further speed-up below which the curve is called
+        /// saturated. Defaults to 0.05 (5%).
+        #[arg(long, default_value_t = cmd::scaling::DEFAULT_TOLERANCE)]
+        tolerance: f64,
+    },
     /// Re-run a capsule and report whether it matches.
     Replay {
         /// Capsule to replay.
@@ -438,6 +475,29 @@ fn run(cli: &Cli) -> anyhow::Result<()> {
         } => cmd::hotspot::run(cli.format, dir, size, *seed, flame.as_deref()),
         Command::Diff { a, b } => cmd::diff::run(cli.format, a, b),
         Command::Pareto { capsules, axes } => cmd::pareto::run(cli.format, capsules, axes),
+        Command::Latency {
+            capsules,
+            metric,
+            levels,
+        } => cmd::latency::run(cli.format, capsules, metric, levels),
+        Command::Scaling {
+            dir,
+            size,
+            seed,
+            threads,
+            repeat,
+            thread_env,
+            tolerance,
+        } => {
+            let parsed = match threads.as_deref() {
+                Some(spec) => cmd::scaling::parse_threads(spec)
+                    .map_err(|e| anyhow::anyhow!("--threads: {e}"))?,
+                None => Vec::new(),
+            };
+            cmd::scaling::run(
+                cli.format, dir, size, *seed, &parsed, *repeat, thread_env, *tolerance,
+            )
+        }
         Command::Replay {
             capsule,
             dir,

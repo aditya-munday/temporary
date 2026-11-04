@@ -134,6 +134,8 @@ jobs:
       - run: target/release/ccx replay arena/go-ci/capsule.json --format json
       - run: target/release/ccx test --dir arena/go-multifile --hidden --format json
       - run: target/release/ccx asm --dir arena/go-multifile --format json
+      - run: target/release/ccx latency arena/asm/capsule.phase1.json --format json | python3 -c "import json,sys; r=json.load(sys.stdin); s=r['capsules'][0]['summary']; assert r['kind']=='indicative' and s['samples']>=2 and any(p['label']=='p50' and p['value_ns'] for p in s['percentiles'])"
+      - run: target/release/ccx scaling --dir arena/naive --size naive --seed 1 --threads 1,2 --repeat 2 --format json | python3 -c "import json,sys; r=json.load(sys.stdin); pts=r['curve']['points']; assert r['kind']=='indicative' and len(pts)==2 and pts[0]['threads']==1 and 'speedup' not in pts[0] and pts[1]['speedup']>0"
   cross-machine-repeatability:
     name: Repeatability on ${{ matrix.runner }}
     runs-on: ${{ matrix.runner }}

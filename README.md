@@ -195,11 +195,11 @@ profiles are limited to the safe C/C++ argv template.
 ## Commands
 
 `ccx doctor`, `init`, `build`, `run`, `test`, `measure`, `repeat`, `experiment`,
-`matrix`, `pareto`, `asm`, `diff`, `replay`, and `validate` are available. Add
-`--format json` for machine-readable reports. `ccx build` stores the binary
-under `.ccx/out` using its SHA-256 in the filename; intermediate files use a
-per-invocation scratch directory. Run `ccx --help` and `ccx <command> --help`
-for arguments.
+`matrix`, `pareto`, `asm`, `hotspot`, `diff`, `latency`, `scaling`, `replay`,
+and `validate` are available. Add `--format json` for machine-readable reports.
+`ccx build` stores the binary under `.ccx/out` using its SHA-256 in the
+filename; intermediate files use a per-invocation scratch directory. Run
+`ccx --help` and `ccx <command> --help` for arguments.
 
 `ccx repeat` runs `measure` N separate times, each with its own capsule, and
 reports the spread across them against the ranking tolerance. Where
@@ -214,6 +214,20 @@ deterministic metrics (default `instructions`, `peak_memory`, `binary_size`)
 and reports which are dominated and which are on the frontier; it refuses a
 wall-clock or hardware-counter axis because a frontier over a noisy axis is a
 drawing of noise.
+
+`ccx latency` shows the wall-clock distribution a capsule's median and spread
+hide: percentiles and a log2 histogram over the recorded samples. A percentile
+the sample count cannot support is reported as `unavailable` rather than
+interpolated, so a twenty-run capsule never invents a p99. Like every wall-clock
+number, it is labelled `indicative`; it is whole-process run latency, not a
+per-request service time.
+
+`ccx scaling` runs a solution at a sweep of thread counts and reports the
+speed-up against the one-thread baseline and the efficiency (speed-up per
+thread). It never extrapolates a thread count it did not run, and it says when
+the curve has stopped growing. The sweep is `indicative` because speed-up is a
+ratio of whole-process wall times; a serial solution correctly produces a flat
+curve.
 
 ## Problems
 

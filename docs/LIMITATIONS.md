@@ -128,6 +128,15 @@ known gaps in the expanded Phase 1 target:
   numbers are precise. The canary is advisory and never affects a metric or a
   verdict; its 20% tolerance is deliberately loose, so a small real drift can go
   unreported.
+- The wall-clock timing diagnostic flags a run as an outlier only when it is
+  more than twice the median or less than half of it, and its warm-up evidence
+  only counts leading slow runs and how far the first run sat above the median.
+  It describes the samples that were recorded; it does not remove or reweight
+  them, does not correct a slow host, and cannot recover a run that was never
+  taken. A host that is uniformly slow produces no outliers at all, and a host
+  that settles slowly but stays within the factor thresholds is reported as
+  settled. Like the canary, the diagnostic is advisory and never affects a
+  metric, a rank, or a verdict.
 - C, C++, and Rust allocation counts use a separate Valgrind Memcheck xtree
   pass for the main process and its threads. Allocations in forked or exec'd
   child processes are not aggregated, so these metrics are not process-tree
@@ -161,6 +170,20 @@ known gaps in the expanded Phase 1 target:
   network, and read-only mount tampering. This does not verify containment on
   Windows or macOS hosts; those host integrations remain outstanding.
 - There is no published release or outside-user installation report yet.
+- `ccx latency` reports percentiles and a histogram only from the raw samples a
+  capsule recorded. Capsules written before raw samples were kept, or that
+  recorded fewer samples than a percentile needs, yield `unavailable` for the
+  levels the count cannot support; there is no interpolation and no smoothing.
+  The values are whole-process run latencies, not per-request service times, and
+  remain host- and load-dependent.
+- `ccx scaling` measures only the thread counts it actually runs; it does not
+  extrapolate to counts it did not run, and it does not model a machine other
+  than the host it runs on. Speed-up is a wall-clock ratio and is therefore
+  indicative, so a curve from a loaded host is a picture of that load as much as
+  of the code. The sweep sets one environment variable (`OMP_NUM_THREADS` by
+  default) and cannot force a runtime that ignores it to use more threads, so a
+  flat curve can mean either a serial program or a runtime that did not honour
+  the variable.
 
 Do not interpret these absences as completed Phase 1 gates. They are visible
 here so a scaffold feature cannot be mistaken for a verified capability.

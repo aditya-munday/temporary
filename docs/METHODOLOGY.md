@@ -70,6 +70,17 @@ and `ccx replay` surfaces it as a note. The default drift tolerance is 20%,
 deliberately generous, so the canary catches gross drift rather than adding a
 second, hidden flake source.
 
+The capsule also records wall-clock timing diagnostics (schema 18). Each
+indicative wall-clock sample keeps its run index and a slow/fast outlier flag,
+set when the sample is more than twice the median or less than half of it, along
+with a trimmed median and warm-up evidence. The warm-up evidence is read off the
+samples already taken — how many leading runs were slow outliers and how far the
+first run sat above the median — so it adds no runs and cannot change a
+measurement; it tells a reader whether the host had settled when sampling began.
+Like the canary, the diagnostic is advisory: it never changes a metric, a rank,
+or a verdict, and `ccx replay` surfaces a non-settled host or flagged outliers
+as a note.
+
 The measurement table and JSON report include the execution target, host
 fingerprint, pinned toolchain environment fingerprint, and each metric's
 observed minimum, maximum, p95, p99, and relative spread. Tail percentiles are
@@ -150,6 +161,28 @@ better on one; the survivors are the frontier. The default axes are
 hardware-counter axis is refused, because a frontier over a noise axis draws
 noise as if it were structure. A capsule missing an axis is kept off the
 frontier and reported as incomplete rather than treated as infinitely bad.
+
+`ccx latency` reads the raw wall-clock samples a capsule already records and
+reports the distribution they form: minimum, median, mean, maximum, sample
+standard deviation, a set of percentiles, and a log2 histogram. It performs no
+interpolation. A percentile is only reported when the sample count supports it —
+`p90` needs 11 samples, `p95` needs 20, `p99` needs 100, and `p99.9` needs 1000 —
+and an unsupported level is reported as `unavailable` with the count it would
+need, so a twenty-run capsule never invents a tail it did not observe. The
+values are whole-process run latencies, one per fresh process, so they describe
+run-to-run behaviour rather than per-request service time, and the whole view is
+`indicative`.
+
+`ccx scaling` runs one solution, on one input, at a sweep of thread counts and
+reports the median wall time at each count, the speed-up against the one-thread
+baseline, and the efficiency (speed-up divided by thread count). It never
+extrapolates: only the thread counts actually run appear in the curve. The curve
+is called saturated at the first point beyond which no further point improves
+speed-up by more than the tolerance (5% by default). Correctness is re-checked
+at every thread count before timing, because a solution can be right serially
+and wrong in parallel. Speed-up is a ratio of whole-process wall times and is
+therefore `indicative`; a serial solution produces a flat curve, which is the
+correct and expected result rather than a failure.
 
 `ccx diff` calls metric changes conclusive only when both capsules record the
 same input bytes, problem definition, language, compiler profile and environment,

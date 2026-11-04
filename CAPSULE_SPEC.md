@@ -1,4 +1,4 @@
-# CAPSULE_SPEC.md — Experiment Capsule, version 17
+# CAPSULE_SPEC.md — Experiment Capsule, version 18
 
 A **capsule** is the unit of evidence on CodeCurrency. It is a small, versioned
 JSON document that fully describes one measured run of one solution to one
@@ -26,7 +26,7 @@ Design rules:
 
 ```jsonc
 {
-  "schema_version": 17,         // integer, bumped only with a migration
+  "schema_version": 18,         // integer, bumped only with a migration
   "capsule_id": "…",            // sha256 of the canonical body (see §10)
   "created_at": "2026-10-26T11:00:00Z",  // RFC 3339, UTC
   "problem":   { … },           // §2
@@ -42,7 +42,8 @@ Design rules:
   "repeatability": { … },       // §13, optional
   "build_repeatability": { … }, // §14, optional
   "applied_tolerance": { … },   // §16, optional
-  "noise_canary": { … }         // §17, optional
+  "noise_canary": { … },        // §17, optional
+  "timing": { … }               // §18, optional
 }
 ```
 
@@ -452,7 +453,56 @@ Rules:
   measurement as a note, so a reader is warned before trusting indicative
   numbers.
 
-## 18. Migration policy
+## 18. `timing`
+
+Optional. Records wall-clock outlier flags and warm-up evidence for the
+*indicative* wall-clock samples. It is derived entirely from the samples already
+recorded, so it adds no runs and changes no measurement; it exists so a reader
+can see which runs were noise and whether the host had settled before sampling
+began.
+
+Like the canary it is **advisory**: it never changes a metric, a rank, or a
+verdict. The deterministic metrics do not depend on wall clock at all.
+
+```jsonc
+{
+  "samples": [                   // one entry per recorded wall-clock sample
+    { "run": 0, "wall_ns": 30000000.0, "outlier": true,  "direction": "slow" },
+    { "run": 1, "wall_ns": 12000000.0, "outlier": false },
+    { "run": 2, "wall_ns": 11900000.0, "outlier": false }
+  ],
+  "outlier_runs": [0],           // run indices flagged as outliers, in order
+  "trimmed_median_ns": 11950000.0, // median with outliers removed, optional
+  "slow_factor": 2.0,            // above this multiple of the median is "slow"
+  "fast_factor": 0.5,            // below this multiple of the median is "fast"
+  "warm_up": {
+    "leading_slow_runs": 1,      // leading runs flagged slow, from the first
+    "first_run_penalty_pct": 150.0 // first run vs median, percent (>= 0)
+  }
+}
+```
+
+Rules:
+
+- `samples` preserves the recorded order: `run` is the sample's zero-based
+  index, strictly increasing from 0, and `wall_ns` is the recorded wall clock.
+- `direction` is absent for an in-range sample, `"slow"` when the sample exceeds
+  `slow_factor` times the median, and `"fast"` when it falls below `fast_factor`
+  times the median. `outlier` is exactly `direction.is_some()`.
+- `outlier_runs` lists the flagged runs in order and must agree with the flags,
+  so a capsule cannot claim outliers it does not show.
+- `trimmed_median_ns` is the median of the unflagged samples, present only when
+  at least three remain; otherwise it is absent rather than a value in disguise.
+- `warm_up.leading_slow_runs` is the count of slow flags at the *start* of the
+  sequence, and `warm_up.first_run_penalty_pct` is how far the first sample sits
+  above the median in percent (zero when it is at or below the median). Both
+  must follow from `samples`, so a capsule whose warm-up record disagrees with
+  its own samples is rejected.
+- `ccx replay` treats `timing` as advisory: it surfaces a host that had not
+  settled, or flagged outliers, as a note. A timing difference never fails a
+  comparison, and the deterministic metrics do not depend on it.
+
+## 19. Migration policy
 
 - Adding an optional field with a safe default: keep the version, note it in the
   changelog. Readers must tolerate unknown *optional* additions only where the
@@ -484,6 +534,7 @@ adds a safe default. "Set version" means the step only bumps the integer.
 | 14 | 15 | raw execution and build repeatability observations | summaries are retained without fabricated raw samples |
 | 15 | 16 | optional `applied_tolerance` | the field is simply absent |
 | 16 | 17 | optional `noise_canary` | the field is simply absent |
+| 17 | 18 | optional `timing` | the field is simply absent |
 
 Original fields keep their meaning across every step. A capsule is never
 silently rewritten on disk by a migration; migration output is written to a new

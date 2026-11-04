@@ -2,6 +2,34 @@
 
 ## [Unreleased]
 
+- Add `ccx latency`, which surfaces the orphaned latency-statistics core. It
+  reads the raw wall-clock samples a capsule records and reports the distribution
+  its median and spread hide: min, median, mean, max, standard deviation,
+  percentiles, and a log2 histogram. It never interpolates: a percentile the
+  sample count cannot support is reported as `unavailable` with the count it
+  would need, so a twenty-run capsule cannot invent a p99. The whole view is
+  labelled `indicative`, because run latency is a host-dependent wall-clock
+  measurement.
+
+- Add `ccx scaling`, which surfaces the orphaned thread-scaling core. It runs one
+  solution at a sweep of thread counts (powers of two up to the host's logical
+  CPU count by default), re-checks correctness at every count, and reports the
+  median wall time, the speed-up against the one-thread baseline, and the
+  efficiency. It never extrapolates a count it did not run and reports where the
+  curve saturates. Speed-up is a wall-clock ratio and is therefore `indicative`;
+  a serial solution correctly yields a flat curve. The sweep overrides the
+  toolchain's own thread pin (Go's `GOMAXPROCS=1`) rather than shadowing it.
+
+- Record wall-clock timing diagnostics (schema 18). `ccx measure` now classifies
+  its indicative wall-clock samples in an optional `timing` capsule field: each
+  sample carries its run index and, when it sits above twice the median or below
+  half of it, a slow/fast outlier flag, alongside a trimmed median and warm-up
+  evidence. The warm-up evidence is derived from the samples already recorded —
+  how many leading runs were slow and how far the first run sat above the median
+  — so it adds no runs and cannot change a measurement. `ccx replay` surfaces a
+  host that had not settled, or flagged outliers, as an advisory note. The
+  diagnostic never affects a metric, a rank, or a verdict.
+
 - Pin Zig's build job count to one. Zig's emitted code depends on its job
   count, which otherwise follows the host's detected CPU count, so the same
   source built to different bytes on a 2-vCPU CI runner and a 4-vCPU

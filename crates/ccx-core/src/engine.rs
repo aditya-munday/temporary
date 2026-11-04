@@ -540,6 +540,7 @@ impl Measurement {
             metrics: self.to_metrics(),
             applied_tolerance: None,
             noise_canary: None,
+            timing: None,
             repeatability: None,
             build_repeatability: None,
         }

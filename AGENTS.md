@@ -252,9 +252,22 @@ scaffold emits a `.file` directive so the object is byte-identical across clean
 builds. Per-language coverage is published in `docs/LANGUAGES.md` and by
 `ccx profiles` (aliases `ccx languages`, `ccx platforms`).
 
-Capsules are at **schema 17** (schema 15 added raw repeatability observations;
+Capsules are at **schema 18** (schema 15 added raw repeatability observations;
 schema 16 adds the optional `applied_tolerance` field; schema 17 adds the
-optional `noise_canary` field). See `CAPSULE_SPEC.md`.
+optional `noise_canary` field; schema 18 adds the optional `timing` field with
+wall-clock outlier flags and warm-up evidence). See `CAPSULE_SPEC.md`.
+
+### Wall-clock timing diagnostics
+
+`ccx measure` classifies its indicative wall-clock samples in the capsule's
+`timing` field: each sample carries a run index and, when it sits above twice
+the median or below half of it, an outlier `direction`. The field also records
+`warm_up` evidence — how many *leading* runs were slow, and how far the first
+run sat above the median — so a reader can tell a host that had settled from one
+that had not. It is derived from the samples already recorded, so it adds no
+runs, and like the canary it is advisory: it never changes a metric, a rank, or
+a verdict. `ccx replay` surfaces a non-settled host or flagged outliers as a
+note.
 
 ### Host-noise canary
 

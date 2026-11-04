@@ -7,11 +7,11 @@
 //! Each step below only adds a safe default. The shape of a migration is:
 //!
 //! ```ignore
-//! 16 => {
-//!     // v16 -> v17: `noise_canary` was introduced. Older capsules were
-//!     // recorded without a canary, so the field is simply absent.
-//!     value["schema_version"] = json!(17);
-//!     version = 17;
+//! 17 => {
+//!     // v17 -> v18: `timing` was introduced. Older capsules recorded
+//!     // wall-clock samples without classifying them, so the field is absent.
+//!     value["schema_version"] = json!(18);
+//!     version = 18;
 //! }
 //! ```
 //!
@@ -185,6 +185,13 @@ pub fn migrate_value(value: Value, from: u32) -> Result<Value, CapsuleError> {
                 // rather than fabricated.
                 value["schema_version"] = serde_json::json!(17);
                 version = 17;
+            }
+            17 => {
+                // v17 -> v18: `timing` (outlier flags and warm-up convergence)
+                // was introduced. Older capsules recorded wall-clock samples
+                // without classifying them, so the field is simply absent.
+                value["schema_version"] = serde_json::json!(18);
+                version = 18;
             }
             _ => {
                 return Err(CapsuleError::Invalid(format!(
@@ -360,6 +367,7 @@ mod tests {
         assert_eq!(migrated["schema_version"], CURRENT_SCHEMA_VERSION);
         assert!(migrated.get("applied_tolerance").is_none());
         assert!(migrated.get("noise_canary").is_none());
+        assert!(migrated.get("timing").is_none());
     }
 
     #[test]
@@ -368,6 +376,14 @@ mod tests {
             migrate_value(serde_json::json!({"schema_version": 16, "metrics": []}), 16).unwrap();
         assert_eq!(migrated["schema_version"], CURRENT_SCHEMA_VERSION);
         assert!(migrated.get("noise_canary").is_none());
+    }
+
+    #[test]
+    fn version_seventeen_migrates_without_timing_diagnostics() {
+        let migrated =
+            migrate_value(serde_json::json!({"schema_version": 17, "metrics": []}), 17).unwrap();
+        assert_eq!(migrated["schema_version"], CURRENT_SCHEMA_VERSION);
+        assert!(migrated.get("timing").is_none());
     }
 
     #[test]
