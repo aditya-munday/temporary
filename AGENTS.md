@@ -417,7 +417,7 @@ Hard-won facts, each of which was a real bug:
     (`zig_target_flags`). Any other language whose output depends on worker
     count needs the same treatment.
 
-12. **`memory.peak` is a high-water mark for the life of the cgroup, not for the
+14. **`memory.peak` is a high-water mark for the life of the cgroup, not for the
     run.** The cgroup v2 file only ever grows, so a raw read after the child
     overstates nothing but attributes every earlier byte to this run. The runner
     snapshots it before `fork` and reports the delta, and only trusts a delta
