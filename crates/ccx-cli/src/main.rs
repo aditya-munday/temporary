@@ -274,6 +274,35 @@ pub enum Command {
         #[arg(long, default_value_t = 1)]
         seed: u64,
     },
+    /// Break down where the issue slots went, from the hardware PMU.
+    ///
+    /// The result is a measurement from `perf stat --topdown`, labelled
+    /// `measured`, machine-dependent, and never a ranking signal.
+    Topdown {
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+        /// Named problem size to profile.
+        #[arg(long, default_value = "naive")]
+        size: String,
+        /// Seed for the generated input.
+        #[arg(long, default_value_t = 1)]
+        seed: u64,
+    },
+    /// Predict static throughput for the solution's assembly with llvm-mca.
+    ///
+    /// The result is a model prediction, labelled `predicted`, never a
+    /// measurement, and is not a ranking signal.
+    Throughput {
+        #[arg(long, default_value = ".")]
+        dir: PathBuf,
+        /// CPU model to analyze against, e.g. `skylake`. Defaults to the model
+        /// the analyzer derives from the target triple.
+        #[arg(long)]
+        mcpu: Option<String>,
+        /// Iterations the analyzer models.
+        #[arg(long, default_value_t = 100)]
+        iterations: u64,
+    },
     /// Show the Pareto frontier over deterministic metrics across capsules.
     Pareto {
         /// Capsules to compare (two or more).
@@ -486,6 +515,12 @@ fn run(cli: &Cli) -> anyhow::Result<()> {
         } => cmd::hotspot::run(cli.format, dir, size, *seed, flame.as_deref()),
         Command::Diff { a, b } => cmd::diff::run(cli.format, a, b),
         Command::Memory { dir, size, seed } => cmd::memory::run(cli.format, dir, size, *seed),
+        Command::Topdown { dir, size, seed } => cmd::topdown::run(cli.format, dir, size, *seed),
+        Command::Throughput {
+            dir,
+            mcpu,
+            iterations,
+        } => cmd::throughput::run(cli.format, dir, mcpu.as_deref(), *iterations),
         Command::Pareto { capsules, axes } => cmd::pareto::run(cli.format, capsules, axes),
         Command::Latency {
             capsules,

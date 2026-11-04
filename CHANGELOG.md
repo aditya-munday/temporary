@@ -2,6 +2,30 @@
 
 ## [Unreleased]
 
+- Add `ccx topdown`, the top-down microarchitecture breakdown (C11). It runs the
+  solution under `perf stat --topdown` and reports the four level-one buckets —
+  retiring, bad speculation, front-end bound, back-end bound — whose fractions
+  sum to one, plus the raw perf metric strings so the parse can be checked. The
+  numbers come from the hardware PMU, so they are labelled `measured` but are
+  machine-dependent and are never a ranking signal, exactly like the flat
+  hardware counters the capsule already carries. A PMU that refuses the events
+  or does not expose the slot counters yields an honest `unavailable` with
+  perf's own diagnostic, never zeros. The analyzer lives in the pinned Clang
+  image, which now carries `linux-perf`, so the solution's own toolchain does
+  not need it.
+
+- Add `ccx throughput`, the static throughput a machine model predicts for the
+  solution's assembly (C12). It compiles the measured build's assembly and reads
+  it with `llvm-mca`, reporting the modelled cycles, IPC, uOps per cycle,
+  dispatch width, and the resource pressure aggregated busiest-first, plus the
+  instructions the model does not understand. Because nothing ran, the result is
+  labelled `predicted` and is never a measurement or a ranking signal. The
+  report always names the CPU model it modelled against. `llvm-mca` is an LLVM
+  tool, so the analyzer lives in the pinned Clang image; the assembly is emitted
+  in AT&T syntax because the analyzer rejects GCC's Intel-syntax mnemonics.
+  Sub-resource names that llvm-mca emits as raw control bytes are rendered as
+  their decimal index (`Zn4LSU.2`) with a note.
+
 - Read peak memory from the cgroup high-water mark when the kernel exposes one
   that covers the run, falling back to `getrusage` peak RSS otherwise (schema
   19). The runner reads `memory.peak` (cgroup v2) or `memory.max_usage_in_bytes`

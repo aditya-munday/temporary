@@ -200,6 +200,34 @@ program that never allocates. Massif groups by allocation site, not by size
 class; the histogram is derived from the sites' leaf blocks, so a site that
 holds blocks in several classes appears in each.
 
+`ccx topdown` attributes every issue slot in the pipeline to one of four
+buckets — retiring, bad speculation, front-end bound, back-end bound — and the
+four fractions sum to one. It reads the buckets from `perf stat --topdown`,
+which is `perf_event_open` underneath, so the numbers are `measured` and
+machine-dependent, and are never a ranking signal, exactly like the flat
+hardware counters the capsule already carries. When the PMU refuses the events
+or does not expose the slot counters, the command reports `unavailable` with
+perf's own diagnostic and no split; it never substitutes zeros. The raw
+`metric-value` strings perf produced travel with the fractions so a reader can
+check the parse without rerunning anything. The analyzer lives in the pinned
+Clang image, which carries `linux-perf`; the measured binary still comes from
+the solution's own toolchain, and the two pinned images share a Debian base, so
+a gcc-built binary runs there unchanged.
+
+`ccx throughput` is the one number in the engine that no execution produces. It
+compiles the measured build's assembly and reads it with `llvm-mca`, a static
+machine model, reporting the modelled total cycles, IPC, uOps per cycle,
+dispatch width, block reciprocal throughput, and the resource pressure
+aggregated busiest-first, plus the instructions the model does not understand
+(it charges a fixed penalty for a call and ignores program-counter updates
+around a return, so those are listed). Because nothing ran, the result is
+labelled `predicted` and is never a measurement or a ranking signal; it
+describes the code relative to the named CPU model, not the host. The report
+always names that model, and defaults to the one the analyzer derives from the
+target triple. The analyzer lives in the pinned Clang image because `llvm-mca`
+is an LLVM tool; the assembly is emitted in AT&T syntax, which the analyzer
+accepts, rather than GCC's Intel syntax, which it rejects.
+
 `ccx diff` calls metric changes conclusive only when both capsules record the
 same input bytes, problem definition, language, compiler profile and environment,
 execution target, runtime arguments and environment, stack limit, and measurement

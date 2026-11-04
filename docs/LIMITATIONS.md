@@ -184,6 +184,20 @@ known gaps in the expanded Phase 1 target:
   default) and cannot force a runtime that ignores it to use more threads, so a
   flat curve can mean either a serial program or a runtime that did not honour
   the variable.
+- `ccx topdown` needs a hardware PMU that exposes the top-down slot counters and
+  a kernel that permits `perf_event_open`. Where the host denies it, the command
+  reports `unavailable` with perf's own diagnostic and no split, so a container
+  without `CAP_PERFMON` or with `perf_event_paranoid` above the allowance yields
+  no buckets at all. The numbers are hardware measurements and are
+  machine-dependent: they describe the host the run happened on, not the
+  solution in the abstract, and they are never a ranking signal.
+- `ccx throughput` is a static machine-model prediction, not a measurement. It
+  describes the compiler's assembly relative to one named CPU model; a model
+  that does not cover an instruction charges it a fixed penalty and the report
+  lists those instructions, so a prediction over code full of calls is weak. It
+  is never a ranking signal, and the numbers move with the compiler version and
+  the chosen model, so two predictions are comparable only when both the
+  assembly and the model match.
 
 Do not interpret these absences as completed Phase 1 gates. They are visible
 here so a scaffold feature cannot be mistaken for a verified capability.

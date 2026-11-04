@@ -78,6 +78,12 @@ jobs:
       - run: target/release/ccx repeat --dir arena/multi-file --size good --seed 42 --repeat 2 --samples 3 --format json | python3 -c "import json,sys; r=json.load(sys.stdin); assert r['all_deterministic_within_tolerance'] and r['achieved_tolerance_pct'] <= r['tolerance_pct']"
       - run: target/release/ccx replay arena/multi-file/capsule.json --format json
       - run: target/release/ccx replay evidence/sorted-pair-sum-great.json --dir arena/great --format json | python3 -c "import json,sys; r=json.load(sys.stdin); assert r['reproduced'] and r['deterministic_match']"
+      # The static-throughput prediction must be produced (kind `predicted`) and
+      # must never claim to be a measurement.
+      - run: target/release/ccx throughput --dir arena/multi-file --format json | python3 -c "import json,sys; r=json.load(sys.stdin); assert r['kind'] == 'predicted' and r['available'] and r['report']['instruction_count'] > 0"
+      # Top-down is a hardware measurement that a CI host usually cannot take.
+      # The gate asserts the label and the honesty of the fallback, not a split.
+      - run: target/release/ccx topdown --dir arena/multi-file --size good --seed 42 --format json | python3 -c "import json,sys; r=json.load(sys.stdin); assert r['kind'] == 'measured'; assert r['available'] == (r['topdown']['breakdown'] is not None)"
       - run: target/release/ccx test --dir arena/asm --hidden --format json
       - run: target/release/ccx asm --dir arena/asm --format json
       - run: target/release/ccx measure --dir arena/asm --size great --seed 1 --repeat 2 --format json

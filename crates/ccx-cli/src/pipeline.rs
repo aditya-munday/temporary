@@ -120,6 +120,27 @@ pub struct OptimizationRemarks {
     pub text: String,
 }
 
+/// The result of a static-throughput analysis: the model's report, when the
+/// profile had an analyzer to produce one, and how many assembly files the
+/// solution compiled to.
+#[derive(Debug, Clone)]
+pub struct StaticThroughput {
+    pub report: Option<ccx_core::throughput::McaReport>,
+    pub assembly_files: usize,
+}
+
+/// Which assembly dialect the compiler should emit.
+///
+/// The human-facing `ccx asm` output uses Intel syntax because it is what most
+/// readers expect. `llvm-mca` cannot parse several Intel mnemonics GCC emits
+/// (for example `movsx rsi, esi`), so the throughput path asks for AT&T
+/// instead: the same instructions, in the dialect the analyzer understands.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum AssemblySyntax {
+    Att,
+    Intel,
+}
+
 fn filter_optimization_remarks(stderr: &str, source_filters: &[String]) -> String {
     stderr
         .lines()
@@ -1379,6 +1400,13 @@ callgrind_annotate --show=Ir --auto=yes --threshold=99{include_args} /work/scrat
     }
 
     pub fn build_assembly(&self) -> anyhow::Result<Vec<(String, PathBuf)>> {
+        self.build_assembly_with_syntax(AssemblySyntax::Intel)
+    }
+
+    fn build_assembly_with_syntax(
+        &self,
+        syntax: AssemblySyntax,
+    ) -> anyhow::Result<Vec<(String, PathBuf)>> {
         if self.sol.language == ccx_core::capsule::Language::AsmX86_64 {
             return self
                 .sol
@@ -1527,12 +1555,13 @@ callgrind_annotate --show=Ir --auto=yes --threshold=99{include_args} /work/scrat
                     "-fverbose-asm".to_string(),
                     "-S".to_string(),
                 ];
-                if language == ccx_core::capsule::Language::C {
-                    flags.extend(["-std=c17".to_string(), "-masm=intel".to_string()]);
-                } else if language == ccx_core::capsule::Language::D {
+                if syntax == AssemblySyntax::Intel {
                     flags.push("-masm=intel".to_string());
-                } else {
-                    flags.extend(["-std=c++20".to_string(), "-masm=intel".to_string()]);
+                }
+                match language {
+                    ccx_core::capsule::Language::C => flags.push("-std=c17".to_string()),
+                    ccx_core::capsule::Language::D => {}
+                    _ => flags.push("-std=c++20".to_string()),
                 }
                 (
                     flags,
@@ -1604,6 +1633,278 @@ callgrind_annotate --show=Ir --auto=yes --threshold=99{include_args} /work/scrat
             })
             .unwrap_or_else(|| "solution".to_string());
         Ok(vec![(source, output)])
+    }
+
+    /// Analyze the solution's assembly with `llvm-mca`, statically.
+    ///
+    /// The block that is analyzed is the compiler's own output for the same
+    /// build the measurements use, so the prediction describes the code under
+    /// test rather than a hand-written sample. `mcpu` names the machine model;
+    /// when it is `None` the analyzer picks one from the target triple.
+    ///
+    /// Returns `Ok(None)` when the profile has no `llvm-mca` in its image, so a
+    /// caller can report "unavailable" honestly instead of failing. The
+    /// assembly file count travels with the result, because a multi-file
+    /// solution is only partly modeled by the first file.
+    pub fn static_throughput(
+        &self,
+        mcpu: Option<&str>,
+        iterations: u64,
+    ) -> anyhow::Result<StaticThroughput> {
+        let outputs = self.build_assembly_with_syntax(AssemblySyntax::Att)?;
+        let assembly_files = outputs.len();
+        let first = outputs
+            .first()
+            .ok_or_else(|| anyhow::anyhow!("assembly generation returned no files"))?;
+        let host_assembly = first.1.clone();
+
+        // `llvm-mca` is an LLVM tool, so it lives in the pinned Clang image
+        // rather than being copied into every toolchain. The assembly is still
+        // the solution's own compiler output (built above with its own image);
+        // only the analyzer comes from Clang. When that image is absent the
+        // analysis is honestly unavailable rather than an error.
+        let Some(analyzer_toolchain) =
+            ccx_core::toolchain::pinned(ccx_core::capsule::ToolchainName::Clang)
+        else {
+            return Ok(StaticThroughput {
+                report: None,
+                assembly_files,
+            });
+        };
+        let analyzer_image = Docker::image_ref(&analyzer_toolchain);
+
+        let assembly_dir = self.scratch_dir().join("throughput");
+        std::fs::create_dir_all(&assembly_dir)?;
+        let host_assembly_copy = assembly_dir.join("sol.s");
+        std::fs::copy(&host_assembly, &host_assembly_copy)?;
+
+        let mut command: Vec<String> = vec!["/opt/ccx/runner".to_string()];
+        command.extend([
+            "--timeout-ms".to_string(),
+            "120000".to_string(),
+            "--memory-bytes".to_string(),
+            "1073741824".to_string(),
+            "--stack-bytes".to_string(),
+            "8388608".to_string(),
+            "--pids-limit".to_string(),
+            "64".to_string(),
+            "--max-output-bytes".to_string(),
+            (64 * 1024 * 1024u64).to_string(),
+            "--cwd".to_string(),
+            "/work/scratch".to_string(),
+            "--".to_string(),
+            "sh".to_string(),
+            "-eu".to_string(),
+            "-c".to_string(),
+        ]);
+        let mut arguments = format!("-iterations={iterations}");
+        if let Some(mcpu) = mcpu {
+            arguments.push_str(&format!(" -mcpu={}", shell_quote(mcpu)));
+        }
+        arguments.push_str(" -json /assembly/sol.s");
+        // Prefer the versioned binary the Debian package installs; fall back to
+        // an unversioned one so a differently packaged image still works.
+        let script = format!(
+            "for tool in llvm-mca-19 llvm-mca; do \
+               if command -v \"$tool\" >/dev/null 2>&1; then exec \"$tool\" {arguments}; fi; \
+             done; \
+             echo 'no llvm-mca in this image' >&2; exit 127"
+        );
+        command.push(script);
+
+        let mounts: Vec<(String, String)> = vec![(
+            assembly_dir.to_string_lossy().to_string(),
+            "/assembly".to_string(),
+        )];
+        let policy = SandboxPolicy {
+            memory_bytes: 1024 * 1024 * 1024,
+            container_memory_bytes: 1536 * 1024 * 1024,
+            timeout_ms: 120_000,
+            cpuset: None,
+            ..SandboxPolicy::default()
+        };
+        let argv = policy.argv_mounted(&analyzer_image, &command, &mounts);
+        let (_, stdout, stderr) = self.docker.run_bytes(&argv)?;
+        let outcome = ccx_core::engine::parse_framed_report(&stdout).ok_or_else(|| {
+            Fixable::new(format!(
+                "the static-throughput analyzer produced no usable report\n{}",
+                String::from_utf8_lossy(&stderr)
+            ))
+            .fix("run `ccx asm` first to confirm the solution compiles to assembly")
+            .into_error()
+        })?;
+        // A profile without the analyzer is an honest "unavailable", not a
+        // failure of the solution.
+        if outcome.stderr.contains("no llvm-mca in this image") {
+            return Ok(StaticThroughput {
+                report: None,
+                assembly_files,
+            });
+        }
+        if outcome.exit_status != 0 {
+            return Err(Fixable::new(format!(
+                "the static-throughput analyzer did not run (exit {})\n{}",
+                outcome.exit_status, outcome.stderr
+            ))
+            .fix("run `ccx asm` first to confirm the solution compiles to assembly")
+            .into_error());
+        }
+        match ccx_core::throughput::parse_mca_json(&outcome.stdout) {
+            Some(report) => Ok(StaticThroughput {
+                report: Some(report),
+                assembly_files,
+            }),
+            None => Err(Fixable::new(
+                "the static-throughput analyzer produced no usable report".to_string(),
+            )
+            .fix("confirm the pinned image contains llvm-mca-19")
+            .into_error()),
+        }
+    }
+
+    /// Read the top-down microarchitecture breakdown from the hardware PMU.
+    ///
+    /// The solution runs under `perf stat --topdown`, which needs
+    /// `perf_event_open` and the PMU's slot counters. Like the static
+    /// throughput path, the analyzer lives in the pinned Clang image, so this
+    /// works even when the solution's own toolchain image has no perf. The
+    /// solution binary still comes from its own toolchain.
+    ///
+    /// Returns `Ok(None)` when the analysis cannot be attempted at all (no
+    /// pinned analyzer image, or no debug build for this language). A PMU that
+    /// refuses the events is *not* an error: it yields a report whose breakdown
+    /// is `None`, with the reason, so the caller can say so honestly.
+    pub fn top_down_counters(
+        &self,
+        prog: &Program,
+        input: &[u8],
+        policy: &SandboxPolicy,
+    ) -> anyhow::Result<Option<ccx_core::topdown::TopDownReport>> {
+        let Some(analyzer_toolchain) =
+            ccx_core::toolchain::pinned(ccx_core::capsule::ToolchainName::Clang)
+        else {
+            return Ok(None);
+        };
+        let analyzer_image = Docker::image_ref(&analyzer_toolchain);
+
+        let input_dir = self.create_input_dir()?;
+        let result = self.top_down_counters_in(prog, input, policy, &input_dir, &analyzer_image);
+        let _ = std::fs::remove_dir_all(&input_dir);
+        result
+    }
+
+    fn top_down_counters_in(
+        &self,
+        prog: &Program,
+        input: &[u8],
+        policy: &SandboxPolicy,
+        input_dir: &Path,
+        analyzer_image: &str,
+    ) -> anyhow::Result<Option<ccx_core::topdown::TopDownReport>> {
+        std::fs::write(input_dir.join("stdin.txt"), input)?;
+
+        let mut mounts = self.source_mounts(&self.solution_source_paths());
+        mounts.push((
+            prog.host_dir.to_string_lossy().to_string(),
+            GUEST_PROG.to_string(),
+        ));
+        mounts.push((
+            input_dir.to_string_lossy().to_string(),
+            GUEST_INPUT.to_string(),
+        ));
+
+        let mut program_argv = String::new();
+        for arg in &self.sol.program_args {
+            program_argv.push(' ');
+            program_argv.push_str(&shell_quote(arg));
+        }
+
+        // `-o` sends perf's own report to a file, leaving the measured
+        // command's stdout untouched; `--emit-file` then carries that file out
+        // of the sandbox. `--topdown` selects the four level-one buckets and
+        // `-j` the machine-readable form. perf's diagnostics stay on stderr,
+        // which the runner frames, so a refused PMU can be explained.
+        let script = format!(
+            "if ! command -v perf >/dev/null 2>&1; then echo 'no perf in this image' >&2; exit 127; fi\n\
+             perf stat --topdown -j -o /work/scratch/topdown.json -- {binary}{program_argv} >/dev/null\n\
+             exit $?\n",
+            binary = GUEST_PROG.to_string() + "/sol",
+        );
+
+        let mut run_policy = policy.clone();
+        run_policy.timeout_ms = policy.timeout_ms.saturating_mul(20).max(60_000);
+
+        let mut command: Vec<String> = vec!["/opt/ccx/runner".to_string()];
+        command.extend([
+            "--timeout-ms".to_string(),
+            run_policy.timeout_ms.to_string(),
+            "--memory-bytes".to_string(),
+            run_policy.memory_bytes.to_string(),
+            "--stack-bytes".to_string(),
+            "8388608".to_string(),
+            "--pids-limit".to_string(),
+            run_policy.pids_limit.to_string(),
+            "--max-output-bytes".to_string(),
+            (32 * 1024 * 1024u64).to_string(),
+            "--stdin".to_string(),
+            GUEST_STDIN.to_string(),
+            "--cwd".to_string(),
+            "/work/scratch".to_string(),
+            "--emit-file".to_string(),
+            "/work/scratch/topdown.json".to_string(),
+            "--".to_string(),
+            "sh".to_string(),
+            "-eu".to_string(),
+            "-c".to_string(),
+            script,
+        ]);
+        let argv = run_policy.argv_mounted(analyzer_image, &command, &mounts);
+        let (_, stdout, stderr) = self.docker.run_bytes(&argv)?;
+        let (outcome, emitted) = ccx_core::engine::parse_framed_report_with_emit(&stdout)
+            .ok_or_else(|| {
+                Fixable::new(format!(
+                    "the top-down profiler produced no usable report\n\nstderr:\n{}",
+                    String::from_utf8_lossy(&stderr)
+                ))
+                .fix("run `ccx doctor` and confirm the pinned image contains perf")
+                .into_error()
+            })?;
+        if outcome.stderr.contains("no perf in this image") {
+            return Ok(None);
+        }
+        // perf exits non-zero when the PMU refuses the events, and that is an
+        // expected, reportable outcome rather than a failure of the solution.
+        let text = emitted
+            .and_then(|bytes| String::from_utf8(bytes).ok())
+            .unwrap_or_default();
+        let mut report = ccx_core::topdown::parse_topdown_json(&text).unwrap_or(
+            ccx_core::topdown::TopDownReport {
+                breakdown: None,
+                raw_metrics: Vec::new(),
+                unavailable_reason: Some(
+                    "perf produced no top-down output for this run".to_string(),
+                ),
+                notes: vec!["measured from hardware PMU counters via perf_event_open; \
+                     machine-dependent, never a ranking signal"
+                    .to_string()],
+            },
+        );
+        // When there is no split, perf's own diagnostic on stderr is the most
+        // useful explanation, so it replaces the generic one.
+        if report.breakdown.is_none() {
+            let diagnostic = outcome
+                .stderr
+                .lines()
+                .map(str::trim)
+                .filter(|line| !line.is_empty())
+                .take(3)
+                .collect::<Vec<_>>()
+                .join("; ");
+            if !diagnostic.is_empty() {
+                report.unavailable_reason = Some(diagnostic);
+            }
+        }
+        Ok(Some(report))
     }
 
     pub fn optimization_remarks(&self) -> anyhow::Result<OptimizationRemarks> {

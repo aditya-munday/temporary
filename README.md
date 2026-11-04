@@ -198,8 +198,8 @@ profiles are limited to the safe C/C++ argv template.
 
 `ccx doctor`, `init`, `build`, `run`, `test`, `measure`, `repeat`, `experiment`,
 `matrix`, `pareto`, `asm`, `hotspot`, `memory`, `diff`, `latency`, `scaling`,
-`replay`, and `validate` are available. Add `--format json` for machine-readable
-reports.
+`topdown`, `throughput`, `replay`, and `validate` are available. Add
+`--format json` for machine-readable reports.
 `ccx build` stores the binary under `.ccx/out` using its SHA-256 in the
 filename; intermediate files use a per-invocation scratch directory. Run
 `ccx --help` and `ccx <command> --help` for arguments.
@@ -239,6 +239,24 @@ cgroup high-water mark when the host exposes one that covers the run, otherwise
 labelled `measured` and decomposed by allocation site and power-of-two size
 class. It reports both rather than conflating them, so a reader can see where
 the live bytes sat and not just how many there were.
+
+`ccx topdown` answers "where did the cycles go" rather than "how slow is it".
+It runs the solution under `perf stat --topdown` and reports the four level-one
+buckets — retiring, bad speculation, front-end bound, back-end bound — whose
+fractions sum to one. The numbers come from the hardware PMU, so they are
+labelled `measured` but are machine-dependent and are never a ranking signal,
+exactly like the flat hardware counters a capsule carries. A host whose PMU
+refuses the events or does not expose the slot counters yields an honest
+`unavailable` with perf's own diagnostic, never zeros.
+
+`ccx throughput` is the one number no execution produces. It compiles the
+measured build's assembly and reads it with `llvm-mca`, reporting the modelled
+cycles, IPC, uOps per cycle, dispatch width, and the resource pressure
+aggregated busiest-first, plus the instructions the model does not understand.
+Because nothing ran, the result is labelled `predicted` and is never a
+measurement or a ranking signal, and it always names the CPU model it modelled
+against. `llvm-mca` and `perf` live in the pinned Clang analysis image, so a
+solution's own toolchain does not need them.
 
 ## Problems
 

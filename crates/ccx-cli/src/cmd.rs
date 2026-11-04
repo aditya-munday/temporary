@@ -19,6 +19,8 @@ pub mod replay;
 pub mod run;
 pub mod scaling;
 pub mod test;
+pub mod throughput;
+pub mod topdown;
 pub mod validate;
 
 use crate::Format;

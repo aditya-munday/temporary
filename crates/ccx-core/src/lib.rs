@@ -17,6 +17,8 @@ pub mod ranking;
 pub mod repeat;
 pub mod sandbox;
 pub mod scaling;
+pub mod throughput;
 pub mod toolchain;
+pub mod topdown;
 
 pub use capsule::*;
