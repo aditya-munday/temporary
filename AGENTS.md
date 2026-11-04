@@ -545,17 +545,42 @@ Hard-won facts, each of which was a real bug:
   labelled.
 - `ccx replay capsule.json`: exit 0, every deterministic metric matches exactly,
   only the indicative `peak_memory` drifts as expected.
-- `scripts/safety-suite.sh`: 17 hostile cases (15 previously green in CI's
-  `container-engine` job). The two new cases were verified against the real
-  runner binary in a PID namespace on this host: `output_forgery` exits 7 with
-  the forged verdict trapped inside `CCX-OUT 192` and the real
-  `CCX-VERDICT {"exit_status":7,...}` last; `signal_trick` exits 0 with
-  `CCX_RUNNER_ALIVE 1` and a framed verdict, so the child's SIGKILL/SIGSTOP
-  volley never reached PID 1. The full suite still runs in CI because it needs
-  the pinned image; this host cannot build it while `snapshot.debian.org`
-  returns 503.
-- `ccx doctor`: `ready: true` on the pinned x86-64 Linux host; the `host
+- `scripts/safety-suite.sh`: **17 hostile cases, 17 passed** against the real
+  pinned images on this host. `output_forgery` exits 7 with the forged verdict
+  trapped inside the `CCX-OUT` section and the real
+  `CCX-VERDICT {"exit_status":7,...}` last; `signal_trick` reports the runner
+  alive with a framed verdict, so the child's SIGKILL/SIGSTOP volley never
+  reached PID 1.
+- `ccx doctor`: `ready: true` on the pinned x86-64 Linux host with the images
+  built (only `hardware counters (perf)` is absent, as designed); the `host
   platform` check reports `MISS` with the reason and fix on any other arch.
+
+### Reproducing the `container-engine` CI job locally
+
+When `snapshot.debian.org` is healthy, the whole job can be reproduced on a
+Docker host, which is the fastest way to tell a code failure from an archive
+outage (fact 18):
+
+```sh
+scripts/pin-toolchains.sh                       # build + repin the images
+cargo build --release                           # embeds the fresh lock
+target/release/ccx doctor                       # expect ready: true
+scripts/safety-suite.sh                         # 17/17 hostile cases
+for p in sorted-pair-sum data-structures/top-k parsing/csv-sum \
+         queues/fifo-stream memory/allocation-layout; do
+  target/release/ccx validate "problems/$p"     # all five must be VALID
+done
+target/release/ccx replay evidence/sorted-pair-sum-great.json \
+  --dir arena/great                             # reproduced + deterministic_match
+scripts/test-alloc-shim.sh                      # real allocation counting
+```
+
+All of the above were run green on this host on 2026-11-03. Note that
+`scripts/pin-toolchains.sh` rewrites `docker/toolchains.lock.json` with the
+local `image_id`s; those are per-daemon and must **not** be committed — the
+`environment_fingerprint`, which is what replay and `compare-capsules.py`
+actually compare, is unchanged, so revert the lock afterwards
+(`git checkout docker/toolchains.lock.json`).
 
 ### Release and supply chain
 
