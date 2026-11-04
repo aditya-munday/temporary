@@ -298,7 +298,12 @@ host CPU model cannot silently change the generated executable.
 
 `ccx doctor` runs every pinned compiler in its image and verifies its exact
 version and the locked compiler-binary fingerprint, in addition to checking
-the harness and build-tool versions.
+the harness and build-tool versions. It also checks two host preconditions
+that are not measurements: at least 4 GiB free at the working directory (read
+via `df -Pk` on Unix) and that the working directory is writable, since
+capsules and scratch are written there. On a platform where free space cannot
+be read the disk check is omitted rather than reported as a pass, so `ready`
+never rests on an unmeasured value.
 
 The toolchain images are currently built locally and are not published to a
 registry. Capsules retain the exact local Docker image ID and a stable

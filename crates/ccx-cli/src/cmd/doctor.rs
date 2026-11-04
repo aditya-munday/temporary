@@ -418,6 +418,49 @@ pub fn run(format: Format) -> anyhow::Result<()> {
         (!perf_ok).then_some("optional: Cachegrind simulated counters remain available"),
     ));
 
+    // Disk: images and per-run scratch need room. Measured on Unix only; on a
+    // platform where it cannot be measured the check is omitted rather than
+    // reported as a pass, so `ready` never rests on an unmeasured value.
+    #[cfg(unix)]
+    {
+        let target = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+        let (ok, detail, fix) = match available_disk_bytes(&target) {
+            Some(bytes) => {
+                let gib = bytes as f64 / (1024.0 * 1024.0 * 1024.0);
+                let ok = bytes >= MIN_FREE_DISK_BYTES;
+                (
+                    ok,
+                    format!("{gib:.1} GiB free at {}", target.display()),
+                    (!ok).then_some("free at least 4 GiB: the pinned images and scratch need room"),
+                )
+            }
+            None => (
+                true,
+                format!("could not read free space at {}", target.display()),
+                None,
+            ),
+        };
+        checks.push(check("disk space", ok, detail, fix));
+    }
+
+    // Permissions: the engine writes capsules and scratch under the working
+    // directory, so it must be writable by the current user.
+    let probe_dir = std::env::current_dir().unwrap_or_else(|_| std::path::PathBuf::from("."));
+    let probe_path = probe_dir.join(".ccx-doctor-write-probe");
+    let writable = std::fs::write(&probe_path, b"ccx")
+        .and_then(|()| std::fs::remove_file(&probe_path))
+        .is_ok();
+    checks.push(check(
+        "workspace writable",
+        writable,
+        if writable {
+            format!("{} is writable", probe_dir.display())
+        } else {
+            format!("{} is not writable by this user", probe_dir.display())
+        },
+        (!writable).then_some("run from a directory you own, or fix its permissions"),
+    ));
+
     let ready = checks
         .iter()
         .filter(|c| {
@@ -531,10 +574,46 @@ fn probe_hardware_counters(
     outcome.hardware
 }
 
+/// Minimum free space `ccx doctor` wants before it calls the host ready.
+#[cfg(unix)]
+const MIN_FREE_DISK_BYTES: u64 = 4 * 1024 * 1024 * 1024;
+
+/// Free bytes available to an unprivileged process at `path`. Uses `df -Pk`
+/// (POSIX output: 1024-byte blocks) so it needs no `unsafe` and no libc
+/// binding. Returns `None` when the value cannot be read, so the caller
+/// reports "unmeasured" rather than guessing.
+#[cfg(unix)]
+fn available_disk_bytes(path: &std::path::Path) -> Option<u64> {
+    let output = std::process::Command::new("df")
+        .arg("-Pk")
+        .arg(path)
+        .output()
+        .ok()?;
+    if !output.status.success() {
+        return None;
+    }
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    // `df -P` prints a header then one line per filesystem; available bytes is
+    // the fourth column, in 1024-byte blocks.
+    let line = stdout.lines().nth(1)?;
+    let avail_blocks: u64 = line.split_whitespace().nth(3)?.parse().ok()?;
+    Some(avail_blocks.saturating_mul(1024))
+}
+
 #[cfg(test)]
 mod tests {
     use super::parse_compiler_version;
     use ccx_core::capsule::ToolchainName;
+
+    #[cfg(unix)]
+    #[test]
+    fn disk_probe_reads_positive_free_space() {
+        let bytes = super::available_disk_bytes(std::path::Path::new("/"));
+        assert!(
+            bytes.is_some_and(|b| b > 0),
+            "expected free space at /, got {bytes:?}"
+        );
+    }
 
     #[test]
     fn compiler_version_parser_matches_toolchain_output() {

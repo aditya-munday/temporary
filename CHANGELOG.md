@@ -2,6 +2,12 @@
 
 ## [Unreleased]
 
+- Extend `ccx doctor` with two host-precondition checks (Group H5): at least
+  4 GiB free at the working directory, and that the working directory is
+  writable. Both are honest about their limits — the disk check reads `df -Pk`
+  on Unix and is omitted (not passed) where free space cannot be read, so
+  `ready` never rests on an unmeasured value.
+
 - Make the measurement trust contract mechanical, not aspirational (Part 1).
   The five metric kinds — `measured`, `simulated`, `indicative`, `predicted`,
   and the absence outcome `unavailable` — now live as data in

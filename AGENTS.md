@@ -536,7 +536,7 @@ Hard-won facts, each of which was a real bug:
 
 - `cargo fmt --all -- --check`: clean.
 - `cargo clippy --workspace --all-targets -- -D warnings`: clean.
-- `cargo test --workspace --release`: 297 tests pass (209 core + 82 CLI + 6
+- `cargo test --workspace --release`: 298 tests pass (209 core + 83 CLI + 6
   integration), 1 ignored. `capsule_robustness.rs` adds the parser fuzz and
   migration-path tests.
 - `python3 -m unittest scripts/test_compare_capsules.py`: 22 tests pass.
