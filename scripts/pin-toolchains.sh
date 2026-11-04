@@ -58,14 +58,18 @@ cp "$ODIN_CACHE" "$TOOLCHAIN_BUILD_CONTEXT/$(basename "$ODIN_ARCHIVE")"
 cp "$GO_CACHE" "$TOOLCHAIN_BUILD_CONTEXT/$(basename "$GO_ARCHIVE")"
 
 # `snapshot.debian.org` is a single shared archive that returns 503
-# (TooManyRequests) under load. A failed `apt-get` fetch is transient and
-# unrelated to the pinned content, so retry the build a few times; Docker
-# caches the layers that already succeeded, so a retry resumes near the
-# failure rather than starting over. This lives in the script, not the
-# Dockerfile, so it does not move the environment fingerprint.
+# (TooManyRequests) or 504 (Gateway Timeout) under load, and its outages can
+# last many minutes. A failed `apt-get` fetch is transient and unrelated to the
+# pinned content, so retry the build; Docker caches the layers that already
+# succeeded, so a retry resumes near the failure rather than starting over.
+# This lives in the script, not the Dockerfile, so it does not move the
+# environment fingerprint. Attempts and delay are overridable for a known-bad
+# archive window.
 build_with_retry() {
   local tag="$1" dockerfile="$2"
-  local attempt=1 max_attempts=5
+  local max_attempts="${CCX_TOOLCHAIN_BUILD_ATTEMPTS:-8}"
+  local base_delay="${CCX_TOOLCHAIN_BUILD_DELAY:-15}"
+  local attempt=1
   while true; do
     if docker build --build-arg "DEBIAN_SNAPSHOT=$DEBIAN_SNAPSHOT" \
         -f "$TOOLCHAIN_BUILD_CONTEXT/$dockerfile" -t "$tag" "$TOOLCHAIN_BUILD_CONTEXT"; then
@@ -75,8 +79,16 @@ build_with_retry() {
       echo "docker build for $tag failed after $max_attempts attempts" >&2
       return 1
     fi
-    echo "docker build for $tag failed (attempt $attempt/$max_attempts); retrying in $((attempt * 10))s" >&2
-    sleep $((attempt * 10))
+    # Capped exponential backoff with jitter so parallel jobs do not retry in
+    # lockstep against an already overloaded archive.
+    local cap=120
+    local delay=$((base_delay * attempt))
+    if (( delay > cap )); then
+      delay=$cap
+    fi
+    delay=$((delay + RANDOM % base_delay))
+    echo "docker build for $tag failed (attempt $attempt/$max_attempts); retrying in ${delay}s" >&2
+    sleep "$delay"
     attempt=$((attempt + 1))
   done
 }

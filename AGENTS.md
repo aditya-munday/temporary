@@ -501,6 +501,20 @@ Hard-won facts, each of which was a real bug:
     moved off PID 1 (e.g. behind a shell), that immunity would be lost — the case
     exists to catch exactly that regression.
 
+18. **`snapshot.debian.org` outages, not code, are the usual cause of a red
+    container job.** The pinned images are built from a frozen Debian snapshot
+    (`20261020T213255Z`); that archive is one shared service and answers `503
+    TooManyRequests / No healthy backends` and `504 Gateway Timeout` under load.
+    When it is down, `pin-toolchains.sh` fails at `apt-get install` with `exit
+    code: 100` (`container-engine`) or is OOM-killed while exporting a layer
+    (`exit code: 137`), and the `Repeatability` jobs fail the same way. The Rust
+    jobs — `rust`, `MSRV`, `host-platform`, `cargo-deny` — still pass, which is
+    the tell: if those are green and only image-building jobs are red, re-run
+    later rather than touching code. `build_with_retry` now takes 8 attempts
+    with capped, jittered backoff (`CCX_TOOLCHAIN_BUILD_ATTEMPTS`,
+    `CCX_TOOLCHAIN_BUILD_DELAY`) to ride out a short window; a multi-hour outage
+    still needs a re-run.
+
 ### Known-honest results (not bugs)
 
 - `ccx test` runs the arena solution at every size in `problem.json`
