@@ -17,6 +17,12 @@
   a reason. Schema 20 adds only the two new enum values; an old capsule's
   `kind`/`method` labels still parse and are not rewritten.
 
+- Stop the allocation hint from printing `totalling 0 bytes` when the byte
+  total was not recorded. `allocations` and `allocated_bytes` are separate
+  metrics; when the byte total is absent the hint now says so instead of
+  inventing a zero, which the trust contract forbids. A regression test covers
+  it.
+
 - Add `ccx topdown`, the top-down microarchitecture breakdown (C11). It runs the
   solution under `perf stat --topdown` and reports the four level-one buckets —
   retiring, bad speculation, front-end bound, back-end bound — whose fractions

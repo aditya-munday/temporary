@@ -123,14 +123,24 @@ pub fn explain(capsule: &Capsule, rules: &Ruleset) -> Vec<Hint> {
             if let Some(e) = evidence(capsule, "allocated_bytes") {
                 ev.push(e);
             }
-            hints.push(Hint {
-                rule: "allocation-volume".into(),
-                message: format!(
+            // The byte total is a separate metric and can be absent; never
+            // print "totalling 0" for a number that was not produced.
+            let message = match metric(capsule, "allocated_bytes") {
+                Some(bytes) => format!(
                     "{} allocations totalling {} bytes. Allocation is a syscall-free but still \
                      serialising cost; reusing a buffer or an arena usually removes it entirely.",
-                    allocs as u64,
-                    metric(capsule, "allocated_bytes").unwrap_or(0.0) as u64
+                    allocs as u64, bytes as u64
                 ),
+                None => format!(
+                    "{} allocations; the total bytes were not recorded. Allocation is a \
+                     syscall-free but still serialising cost; reusing a buffer or an arena \
+                     usually removes it entirely.",
+                    allocs as u64
+                ),
+            };
+            hints.push(Hint {
+                rule: "allocation-volume".into(),
+                message,
                 evidence: ev,
                 confidence: Confidence::Certain,
             });
@@ -592,5 +602,37 @@ mod tests {
             .find(|delta| delta.name == "instructions")
             .unwrap();
         assert_eq!(instructions.significant, Significance::Unknown);
+    }
+
+    #[test]
+    fn allocation_hint_does_not_invent_zero_bytes() {
+        // `allocations` and `allocated_bytes` are separate metrics. When the
+        // byte total is unavailable, the hint must say so, not report 0 bytes.
+        let source = include_str!("../tests/fixtures/capsule-v11.json");
+        let mut capsule = Capsule::from_json(source).unwrap();
+        capsule
+            .metrics
+            .retain(|m| m.name != "allocated_bytes" && m.name != "allocations");
+        capsule.metrics.push(Metric::count(
+            "allocations",
+            50_000,
+            MetricKind::Measured,
+            MetricMethod::Manual,
+        ));
+        let hints = explain(&capsule, &Ruleset::default());
+        let hint = hints
+            .iter()
+            .find(|h| h.rule == "allocation-volume")
+            .expect("allocation hint");
+        assert!(
+            hint.message.contains("not recorded"),
+            "hint must admit the missing total: {}",
+            hint.message
+        );
+        assert!(
+            !hint.message.contains("0 bytes"),
+            "hint must not print 0 bytes: {}",
+            hint.message
+        );
     }
 }
