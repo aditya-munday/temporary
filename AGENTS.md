@@ -1,8 +1,9 @@
 # AGENTS.md — CodeCurrency
 
 Working directory: `/workspace/project`
-Remote: `https://github.com/aditya-munday/CodeCurrency-Runtime.git`
-  (renamed from `CodeCurrency`; old URLs redirect)
+Remote: `https://github.com/Penultimatum-Tech/CodeCurrency-Runtime.git`
+  (project name is **CodeCurrency**; the old `aditya-munday` owner URLs 404,
+  they do not redirect)
 Branch: `main` is the integration branch. The engine landed as PR #1
   (`f5fb476`), x86-64 assembly and the capability matrix as PR #2
   (`cd6ee37`), and statistical tie groups, the Pareto frontier,
@@ -10,7 +11,7 @@ Branch: `main` is the integration branch. The engine landed as PR #1
   (`79ae23f`). All three are merged and green.
 Source idea document: `/workspace/project/PLATFORM_IDEA.txt`
 Task list for the current phase: `PHASE1_AGENT_PROMPT.txt` (untracked)
-GitHub CLI: authenticated as `aditya-munday` (scopes: gist, read:org, repo, workflow)
+GitHub CLI: authenticated as `Penultimatum-Tech` (scopes: gist, read:org, repo, workflow)
 
 ## What this project is
 

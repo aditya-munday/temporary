@@ -422,7 +422,7 @@ checks. The comparison job then rebuilds the pinned images and replays one
 capsule for each strictly gated profile against its local image, which checks
 that environment fingerprints permit real cross-host replay. This checks
 independent hosted runner environments, not three bare-metal CPU models. The
-schema-15 raw-observation gate passed in [hosted CI run 40921272991](https://github.com/aditya-munday/CodeCurrency-Runtime/actions/runs/40921272991)
+schema-15 raw-observation gate passed in [hosted CI run 40921272991](https://github.com/Penultimatum-Tech/CodeCurrency-Runtime/actions/runs/40921272991)
 on 2026-10-29 for commit `85bb71a`. This result covers hosted virtual machines
 and does not establish repeatability on three bare-metal CPU models.
 

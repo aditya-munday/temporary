@@ -7,7 +7,7 @@ version = "0.1.0"
 edition = "2021"
 rust-version = "1.85"
 license = "Apache-2.0"
-repository = "https://github.com/aditya-munday/CodeCurrency-Runtime"
+repository = "https://github.com/Penultimatum-Tech/CodeCurrency-Runtime"
 
 [workspace.lints.rust]
 unsafe_code = "forbid"

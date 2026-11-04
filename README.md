@@ -17,7 +17,7 @@ compiled languages. Each language's measurement coverage is published in the
 
 Requirements: Rust 1.85 or later and Docker with Linux-container support.
 Prebuilt `ccx` binaries for x86-64 Linux, x86-64 macOS, Apple Silicon macOS,
-and x86-64 Windows are attached to each [release](https://github.com/aditya-munday/CodeCurrency-Runtime/releases),
+and x86-64 Windows are attached to each [release](https://github.com/Penultimatum-Tech/CodeCurrency-Runtime/releases),
 with a `SHA256SUMS` file; or build from source with `cargo build --release`.
 Hosted native CLI checks pass on Ubuntu 24.04, Windows Server 2022, macOS 15
 Intel, and macOS 15 Apple Silicon. End-to-end Docker builds, execution, and
