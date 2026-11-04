@@ -292,7 +292,10 @@ main Valgrind process report, and terminates detached descendants before
 reading it. Integration probes verify that direct report forgery and delayed
 forked writes are rejected. The current collector counts threads in the main
 process but does not aggregate allocations from forked or exec'd child
-processes, custom allocators Memcheck cannot recognize, or peak live bytes.
+processes or custom allocators Memcheck cannot recognize. Peak live bytes are
+not part of the capsule metric set; `ccx memory` reports them separately from a
+Valgrind Massif profile (see `docs/METHODOLOGY.md`), and they are never folded
+into `allocations` or `allocated_bytes`.
 
 ## 13. `repeatability`
 

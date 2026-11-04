@@ -1,12 +1,12 @@
 # Performance finding: pair counting
 
-## Current schema-16 result
+## Current schema-19 result
 
 This is the current replayable comparison. It supersedes the older schema-14
 and schema-15 numbers preserved below. The [naive capsule](evidence/sorted-pair-sum-naive-v0.19.json)
 and [sort-and-two-pointers capsule](evidence/sorted-pair-sum-good-v0.19.json)
 were measured with harness `0.19.0`, GCC `14.2.0`, `-O2`, and the pinned
-`ccx-gcc` image (`sha256:1675b1172f35a5012533efd1f2c44f06340f78cc99e448734b5ddc54bebdad1f`).
+`ccx-gcc` image (`sha256:6820bd713cdd4c31a8e8b229c1472dd35e967d53c17c9bef50ea6d40fee09755`).
 Both use the same problem, public seed `1`, size `naive` (800 values), generated
 stdin SHA-256, host fingerprint, and measurement ruleset. Each capsule contains
 twenty ordered same-binary execution samples and three clean-build samples.
@@ -25,7 +25,7 @@ are identical across all twenty repetitions in each capsule.
 | Allocations | 4 | 4 | 0% | measured, Valgrind Memcheck |
 | Allocated bytes | 88,320 | 88,320 | 0% | measured, Valgrind Memcheck |
 | Binary size | 16,560 B | 16,904 B | +2.08% | measured, filesystem stat |
-| Execution wall time | 2.248 ms ± 0.092 ms | 2.068 ms ± 0.053 ms | within noise | indicative, capsule CI95 |
+| Execution wall time | 2.228 ms ± 0.070 ms | 2.029 ms ± 0.075 ms | within noise | indicative, capsule CI95 |
 
 The algorithm change cuts the deterministic instruction count by about half by
 sorting once and then advancing two pointers, instead of visiting every pair.
@@ -36,6 +36,12 @@ hardware-counter readings. The allocation counts and bytes are unchanged, and
 the optimized executable is 344 bytes larger. The wall-time intervals overlap;
 `ccx diff` classifies the timing and paired-ratio differences as within noise,
 so this run does not establish a wall-clock winner.
+
+The deterministic counters above are unchanged from the schema-16 record; the
+re-measurement on the repinned image (the runner gained the cgroup memory read,
+which moves the environment fingerprint) reproduced every simulated, allocation,
+and binary-size value exactly. Only the image digest, the capsule IDs, and the
+indicative wall-clock and build-time samples moved.
 
 `ccx asm --dir arena/naive --format json` and
 `ccx asm --dir arena/good --format json` emit source-mapped assembly and GCC
@@ -62,20 +68,20 @@ Both replay reports must show `reproduced: true` and
 machine-dependent intervals on this host. The deterministic counters and the
 measured allocation and binary-size metrics matched exactly. The capsule IDs
 are
-`ee6c69bb2513c127f53cd253f3334792603aa6c7d59ee4ee12152b17799610a7` and
-`15ff3f62051a55c54d55155cccfafa56642f91db5eeb2a2f1b9c676608c24abe`.
+`0424bbc1484ec5189b503a56eb957cc0932376c7880814edcea061f7c4c8b2ba` and
+`2120631ea0af67b48336b26eecc6eff510e7356f11c33b11043d174c79d4e81b`.
 
 #### A third approach: counting by value
 
 The [great source](arena/great/main.cpp) uses the problem's value bound
 `0 <= a[i] <= 2n` to count frequencies and build a prefix sum instead of
-sorting. Its schema-16, harness-0.19.0 capsule is
+sorting. Its schema-19, harness-0.19.0 capsule is
 [available here](evidence/sorted-pair-sum-great.json). It uses the exact same
 public seed `1`, size `naive` (800 values), stdin SHA-256, GCC 14.2.0 image, and
 host as the naive and good capsules above. It records twenty samples, three
 byte-identical builds, and its measurement report marked instructions eligible
 with 0.00% spread. The capsule ID is
-`e37a2914761dadd2726e05ddca27ae8d2234b07668810358d17369c3cd6b98b2`.
+`18760f22f1958662796a2119621c135b8c0173c23ed98834b669328950d74541`.
 
 | Metric | Sort and two pointers | Count and prefix sum | Change |
 | --- | ---: | ---: | ---: |
@@ -97,8 +103,8 @@ On this small input, the extra frequency and prefix storage consumes much of
 the asymptotic advantage. This is evidence for choosing an algorithm based on
 the input bounds and scale, not evidence that counting is always faster.
 
-The Great candidate's wall-clock median was `1.956 ms ± 0.077 ms`; the good
-candidate measured `2.068 ms ± 0.053 ms`. The confidence intervals overlap,
+The Great candidate's wall-clock median was `2.028 ms ± 0.083 ms`; the good
+candidate measured `2.029 ms ± 0.075 ms`. The confidence intervals overlap,
 and `ccx diff` classifies the paired-ratio change as `within_noise`, so this
 does not establish a wall-clock winner. The instruction and branch counters
 are the supported deterministic comparison for this result.
@@ -118,7 +124,7 @@ target/release/ccx diff evidence/sorted-pair-sum-good-v0.19.json \
 ## Archived schema-14 and harness-0.18 record
 
 The following report records earlier runs. Its values and capsule IDs are kept
-as historical evidence; use the schema-16 capsules above for the current
+as historical evidence; use the schema-19 capsules above for the current
 pair-counting comparison.
 
 ### Earlier pair-counting run
