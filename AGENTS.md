@@ -253,12 +253,36 @@ scaffold emits a `.file` directive so the object is byte-identical across clean
 builds. Per-language coverage is published in `docs/LANGUAGES.md` and by
 `ccx profiles` (aliases `ccx languages`, `ccx platforms`).
 
-Capsules are at **schema 19** (schema 15 added raw repeatability observations;
+Capsules are at **schema 20** (schema 15 added raw repeatability observations;
 schema 16 adds the optional `applied_tolerance` field; schema 17 adds the
 optional `noise_canary` field; schema 18 adds the optional `timing` field with
 wall-clock outlier flags and warm-up evidence; schema 19 adds the `cgroup`
 metric method so `peak_memory` can name the kernel cgroup high-water mark
-instead of `getrusage`). See `CAPSULE_SPEC.md`.
+instead of `getrusage`; schema 20 adds the `predicted` metric kind and the
+`llvm_mca` metric method, so a static model can be labelled without borrowing
+the word "measured"). See `CAPSULE_SPEC.md`.
+
+### The trust contract (Part 1 principles, mechanically enforced)
+
+The five metric kinds and their obligations live in `crates/ccx-core/src/trust.rs`
+as data (`KIND_SPECS`, `PRINCIPLES`) rather than prose, so they cannot drift:
+
+- `measured` — a real hardware or OS counter; may rank only when the host
+  fingerprint matches.
+- `simulated` — a deterministic model of a real run; may rank.
+- `indicative` — wall-clock; machine-dependent; **never** ranks.
+- `predicted` — a static model of code that never ran (llvm-mca), naming its
+  model; **never** ranks.
+- `unavailable` — not a kind but the *absence* of a metric: omitted with a
+  reason, never emitted as `0`.
+
+`Metric::rankable_kind()` and `ranking_eligibility()` are the single place the
+ranking rule is decided, so a `predicted` or `indicative` metric is refused with
+a reason that names the cause. `trust::check_invariants()` asserts the taxonomy
+(the rankable set is exactly `{measured, simulated}`, no kind is both
+deterministic and host-dependent, absence is never zero), the tests call it, and
+`ccx principles` prints the contract while `ccx principles --check` fails CI if
+an invariant is broken.
 
 ### Wall-clock timing diagnostics
 

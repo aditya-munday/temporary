@@ -1,4 +1,4 @@
-# CAPSULE_SPEC.md — Experiment Capsule, version 19
+# CAPSULE_SPEC.md — Experiment Capsule, version 20
 
 A **capsule** is the unit of evidence on CodeCurrency. It is a small, versioned
 JSON document that fully describes one measured run of one solution to one
@@ -14,7 +14,9 @@ Design rules:
    version string is documentation; a digest is the contract.
 4. **Labels are mandatory.** Every metric carries `kind`: `measured` (a real
    hardware or OS counter), `simulated` (a deterministic model, e.g. cachegrind),
-   or `indicative` (wall-clock, machine-dependent).
+   `indicative` (wall-clock, machine-dependent), or `predicted` (a static model
+   of code that never ran, e.g. llvm-mca). The fifth outcome, `unavailable`, is
+   the *absence* of a metric — an omitted field with a reason — never a `0`.
 5. **Validated on load.** A capsule that does not validate is rejected, not
    best-effort parsed. Unknown fields are a hard error at v1.
 6. **Versioned migrations.** The schema only changes by adding a new version and
@@ -26,7 +28,7 @@ Design rules:
 
 ```jsonc
 {
-  "schema_version": 19,         // integer, bumped only with a migration
+  "schema_version": 20,         // integer, bumped only with a migration
   "capsule_id": "…",            // sha256 of the canonical body (see §10)
   "created_at": "2026-10-26T11:00:00Z",  // RFC 3339, UTC
   "problem":   { … },           // §2
@@ -188,11 +190,25 @@ stable as metrics are added.
   "name": "instructions",
   "value": 1234567,
   "unit": "count",
-  "kind": "simulated",        // measured | simulated | indicative
-  "method": "cachegrind",     // cachegrind | perf | getrusage | cgroup | stat | manual | valgrind_memcheck | wall_clock | runner
+  "kind": "simulated",        // measured | simulated | indicative | predicted
+  "method": "cachegrind",     // cachegrind | perf | getrusage | cgroup | stat | manual | valgrind_memcheck | wall_clock | runner | llvm_mca
   "uncertainty": null          // or { "kind": "stdev"|"ci95"|"range", "value": … }
 }
 ```
+
+The four kinds and their obligations:
+
+| kind | what it is | deterministic | host-dependent | may rank |
+|---|---|---|---|---|
+| `measured` | a real hardware or OS counter | no | yes | yes, only when the host fingerprint matches |
+| `simulated` | a deterministic model of a real run | yes | no | yes |
+| `indicative` | wall-clock time | no | yes | **never** |
+| `predicted` | a static model of code that never ran | yes | no | **never** |
+
+`unavailable` is the fifth outcome: a metric that could not be produced is
+omitted with a machine-readable reason, never emitted as `0`. Run
+`ccx principles` to print this table from the code, and `ccx principles --check`
+to fail if the taxonomy invariants are violated.
 
 Phase 1 metric set:
 
@@ -230,6 +246,13 @@ Phase 1 metric set:
 
 Deterministic metrics are the ranking signal. `wall_clock` is explicitly
 `indicative` and is **never** used for ranking in Phase 1.
+
+Some analyses are not stored as capsule metrics at all, because they describe a
+single run rather than a comparable result. `ccx topdown` reports the PMU
+issue-slot split as `measured`; `ccx throughput` reports the `llvm-mca` static
+model as `predicted`, naming the CPU model it was computed for. Both are printed
+with their kind and are never a ranking signal, so a model can never be mistaken
+for a measurement.
 
 `measured` identifies a real instrument; it does not by itself promise
 cross-machine determinism. `getrusage` process counters are measured OS values
@@ -539,6 +562,7 @@ adds a safe default. "Set version" means the step only bumps the integer.
 | 16 | 17 | optional `noise_canary` | the field is simply absent |
 | 17 | 18 | optional `timing` | the field is simply absent |
 | 18 | 19 | `cgroup` metric method | set version; an old `peak_memory` keeps its `getrusage` method, which is still what produced it |
+| 19 | 20 | `predicted` metric kind and `llvm_mca` metric method | set version; both are additive enum values, so old `kind`/`method` labels still parse and are not rewritten |
 
 Original fields keep their meaning across every step. A capsule is never
 silently rewritten on disk by a migration; migration output is written to a new

@@ -20,5 +20,6 @@ pub mod scaling;
 pub mod throughput;
 pub mod toolchain;
 pub mod topdown;
+pub mod trust;
 
 pub use capsule::*;

@@ -12,7 +12,7 @@
 
 use crate::cmd::{self, Fixable};
 use crate::Format;
-use ccx_core::capsule::{Capsule, MetricKind};
+use ccx_core::capsule::Capsule;
 use serde::Serialize;
 
 #[derive(Debug, Clone, Serialize)]
@@ -69,12 +69,7 @@ fn axis_is_deterministic(capsule: &Capsule, name: &str) -> Option<bool> {
         .metrics
         .iter()
         .find(|metric| metric.name == name)
-        .map(|metric| {
-            metric.kind == MetricKind::Simulated
-                || (metric.kind == MetricKind::Measured
-                    && metric.method != ccx_core::capsule::MetricMethod::Perf
-                    && metric.method != ccx_core::capsule::MetricMethod::WallClock)
-        })
+        .map(|metric| metric.rankable_kind() && !metric.machine_dependent())
 }
 
 pub fn run(format: Format, capsules: &[std::path::PathBuf], axes: &[String]) -> anyhow::Result<()> {

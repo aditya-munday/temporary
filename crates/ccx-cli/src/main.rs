@@ -46,6 +46,16 @@ pub enum Command {
     /// List available languages, toolchains, build systems, and metrics.
     #[command(visible_alias = "languages", visible_alias = "platforms")]
     Profiles,
+    /// Print the measurement trust contract: the five metric kinds, the
+    /// provenance vocabulary, and the principles the engine enforces.
+    ///
+    /// With `--check`, exit non-zero if any taxonomy invariant is violated, so
+    /// it can gate CI as a mechanical proof of Part 1's principles.
+    Principles {
+        /// Exit non-zero when the trust contract is violated.
+        #[arg(long)]
+        check: bool,
+    },
     /// Create a new solution scaffold in the current directory.
     Init {
         /// Problem id to target, e.g. `top-k/heap-vs-sort`.
@@ -382,6 +392,7 @@ fn run(cli: &Cli) -> anyhow::Result<()> {
     match &cli.command {
         Command::Doctor => cmd::doctor::run(cli.format),
         Command::Profiles => cmd::profiles::run(cli.format),
+        Command::Principles { check } => cmd::principles::run(cli.format, *check),
         Command::Init {
             problem,
             language,

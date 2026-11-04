@@ -66,6 +66,9 @@ jobs:
       - run: cargo test --release
       - run: cargo build --release
       - run: target/release/ccx doctor --format json
+      # Part 1 gate: the trust contract must hold, mechanically.
+      - run: target/release/ccx principles --check
+      - run: target/release/ccx principles --format json | python3 -c "import json,sys; r=json.load(sys.stdin); kinds={k['kind']:k for k in r['kinds']}; assert r['invariants_hold']; assert kinds['predicted']['rankable'] is False; assert kinds['indicative']['rankable'] is False; assert kinds['simulated']['rankable'] is True and kinds['measured']['rankable'] is True; assert all(k['absence_shown_as'].startswith('unavailable') for k in r['kinds'])"
       - run: target/release/ccx validate problems/sorted-pair-sum --format json
       - run: target/release/ccx validate problems/data-structures/top-k --format json
       - run: target/release/ccx validate problems/parsing/csv-sum --format json

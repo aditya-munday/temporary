@@ -342,6 +342,37 @@ pub fn run(format: Format) -> anyhow::Result<()> {
         (!valgrind_ok).then_some("rebuild the image: `scripts/pin-toolchains.sh`"),
     ));
 
+    // llvm-mca: the source of the `predicted` metrics from `ccx throughput`. It
+    // is an LLVM tool, so it lives in the pinned Clang analysis image. Optional:
+    // a solution can still be built and measured without it.
+    let mca_ok = docker_ok
+        && toolchain::pinned(ToolchainName::Clang)
+            .map(|tc| {
+                docker
+                    .run(&[
+                        "run".into(),
+                        "--rm".into(),
+                        "--entrypoint".into(),
+                        "sh".into(),
+                        Docker::image_ref(&tc),
+                        "-c".into(),
+                        "command -v llvm-mca-19 >/dev/null 2>&1 || command -v llvm-mca >/dev/null 2>&1".into(),
+                    ])
+                    .map(|(s, _, _)| s == 0)
+                    .unwrap_or(false)
+            })
+            .unwrap_or(false);
+    checks.push(check(
+        "llvm-mca (static throughput)",
+        mca_ok,
+        if mca_ok {
+            "available: predicted throughput can be modelled"
+        } else {
+            "not available in the pinned Clang analysis image"
+        },
+        (!mca_ok).then_some("rebuild the image: `scripts/pin-toolchains.sh`"),
+    ));
+
     // Hardware counters: a bonus when the kernel allows them, never required.
     let paranoid = read_perf_event_paranoid();
     let hardware = probe_hardware_counters(&docker, docker_ok);
@@ -389,7 +420,9 @@ pub fn run(format: Format) -> anyhow::Result<()> {
 
     let ready = checks
         .iter()
-        .filter(|c| c.name != "hardware counters (perf)")
+        .filter(|c| {
+            c.name != "hardware counters (perf)" && c.name != "llvm-mca (static throughput)"
+        })
         .all(|c| c.ok);
 
     let measurement_method = if valgrind_ok {

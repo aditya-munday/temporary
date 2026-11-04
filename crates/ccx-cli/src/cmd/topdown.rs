@@ -15,6 +15,7 @@ use crate::cmd::{self, Fixable};
 use crate::context::{policy_for, Solution};
 use crate::pipeline::Pipeline;
 use crate::Format;
+use ccx_core::capsule::MetricKind;
 use ccx_core::topdown::TopDownReport;
 use serde::Serialize;
 use std::path::Path;
@@ -24,8 +25,9 @@ pub struct TopDownCommandReport {
     pub toolchain: String,
     pub size: String,
     pub seed: u64,
-    /// Always `measured`: these come from the hardware PMU.
-    pub kind: String,
+    /// Always `measured`: these come from the hardware PMU. Typed as
+    /// `MetricKind` so the label can never drift from the canonical taxonomy.
+    pub kind: MetricKind,
     /// Whether the four buckets were produced.
     pub available: bool,
     /// Why the split is unavailable, when it is.
@@ -74,7 +76,7 @@ pub fn run(format: Format, dir: &Path, size: &str, seed: u64) -> anyhow::Result<
             toolchain: format!("{} {}", tc.name.profile_id(), tc.version),
             size: size.to_string(),
             seed,
-            kind: "measured".to_string(),
+            kind: MetricKind::Measured,
             available: false,
             unavailable_reason: Some(
                 "the pinned analyzer image does not contain perf, so hardware PMU \
@@ -99,7 +101,7 @@ pub fn run(format: Format, dir: &Path, size: &str, seed: u64) -> anyhow::Result<
         toolchain: format!("{} {}", tc.name.profile_id(), tc.version),
         size: size.to_string(),
         seed,
-        kind: "measured".to_string(),
+        kind: MetricKind::Measured,
         available: topdown.breakdown.is_some(),
         unavailable_reason: topdown.unavailable_reason.clone(),
         topdown: Some(topdown),

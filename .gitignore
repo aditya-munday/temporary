@@ -9,3 +9,4 @@ docker/*.tar.xz
 
 # Local agent handoff notes, not part of the project.
 PHASE1_AGENT_PROMPT.txt
+ULTIMATE_RUNTIME_PROMPT.txt

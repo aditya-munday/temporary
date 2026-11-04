@@ -198,11 +198,19 @@ profiles are limited to the safe C/C++ argv template.
 
 `ccx doctor`, `init`, `build`, `run`, `test`, `measure`, `repeat`, `experiment`,
 `matrix`, `pareto`, `asm`, `hotspot`, `memory`, `diff`, `latency`, `scaling`,
-`topdown`, `throughput`, `replay`, and `validate` are available. Add
-`--format json` for machine-readable reports.
+`topdown`, `throughput`, `principles`, `replay`, and `validate` are available.
+Add `--format json` for machine-readable reports.
 `ccx build` stores the binary under `.ccx/out` using its SHA-256 in the
 filename; intermediate files use a per-invocation scratch directory. Run
 `ccx --help` and `ccx <command> --help` for arguments.
+
+`ccx principles` prints the measurement trust contract the engine is built on:
+the five metric kinds (`measured`, `simulated`, `indicative`, `predicted`, and
+the absence outcome `unavailable`), what each one promises, the provenance
+vocabulary, and the principles that are enforced in code. It renders the same
+data the tests assert, so it cannot drift from the implementation, and
+`ccx principles --check` exits non-zero when a taxonomy invariant is violated,
+which is how CI proves Part 1 mechanically.
 
 `ccx repeat` runs `measure` N separate times, each with its own capsule, and
 reports the spread across them against the ranking tolerance. Where

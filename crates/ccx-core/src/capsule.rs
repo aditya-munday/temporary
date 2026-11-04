@@ -13,7 +13,7 @@ pub mod migrate;
 pub mod repeatability;
 
 /// The schema version this build writes.
-pub const CURRENT_SCHEMA_VERSION: u32 = 19;
+pub const CURRENT_SCHEMA_VERSION: u32 = 20;
 pub const LEGACY_BINARY_DIGEST_UNAVAILABLE: &str = "unavailable_legacy";
 pub const DEFAULT_BUILD_REPEAT: u32 = 3;
 
@@ -105,6 +105,11 @@ pub enum MetricKind {
     Simulated,
     /// Wall-clock. Machine-dependent, never used for ranking.
     Indicative,
+    /// A static model of code that was never executed (e.g. `llvm-mca`). It
+    /// describes the code relative to a named machine model, not this host, so
+    /// it is neither a measurement nor a simulation of a real run, and it is
+    /// never used for ranking.
+    Predicted,
 }
 
 impl fmt::Display for MetricKind {
@@ -113,6 +118,7 @@ impl fmt::Display for MetricKind {
             MetricKind::Measured => "measured",
             MetricKind::Simulated => "simulated",
             MetricKind::Indicative => "indicative",
+            MetricKind::Predicted => "predicted",
         })
     }
 }
@@ -132,6 +138,10 @@ pub enum MetricMethod {
     ValgrindMemcheck,
     WallClock,
     Runner,
+    /// `llvm-mca`'s static throughput model. Machine-*model*-dependent (it names
+    /// a CPU model it was not necessarily run on), so it is never a ranking
+    /// signal, but it is not machine-dependent in the host sense either.
+    LlvmMca,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -193,6 +203,18 @@ impl Metric {
                     | MetricMethod::Perf
                     | MetricMethod::WallClock
             )
+    }
+
+    /// Whether this metric may ever enter a ranking, on kind alone.
+    ///
+    /// Only deterministic kinds qualify: `simulated` (identical on any machine)
+    /// and `measured` (a real counter — allowed only when the host fingerprint
+    /// also matches, which `ranking_eligibility` enforces separately).
+    /// `indicative` and `predicted` are machine- or model-dependent by
+    /// construction, so they are never ranking signals. This is Part 1
+    /// principle 2 expressed as code rather than as prose.
+    pub fn rankable_kind(&self) -> bool {
+        matches!(self.kind, MetricKind::Simulated | MetricKind::Measured)
     }
 }
 
@@ -1526,6 +1548,42 @@ mod tests {
             MetricMethod::WallClock,
         );
         assert!(build_time.machine_dependent());
+    }
+
+    #[test]
+    fn the_four_metric_kinds_round_trip_through_serde() {
+        for (kind, wire) in [
+            (MetricKind::Measured, "measured"),
+            (MetricKind::Simulated, "simulated"),
+            (MetricKind::Indicative, "indicative"),
+            (MetricKind::Predicted, "predicted"),
+        ] {
+            assert_eq!(serde_json::to_string(&kind).unwrap(), format!("\"{wire}\""));
+            let parsed: MetricKind = serde_json::from_str(&format!("\"{wire}\"")).unwrap();
+            assert_eq!(parsed, kind);
+            assert_eq!(kind.to_string(), wire);
+        }
+    }
+
+    #[test]
+    fn an_unknown_metric_kind_is_rejected() {
+        // The taxonomy is closed: a capsule cannot invent a sixth kind.
+        let parsed: Result<MetricKind, _> = serde_json::from_str("\"guessed\"");
+        assert!(parsed.is_err());
+    }
+
+    #[test]
+    fn only_deterministic_kinds_are_rankable() {
+        assert!(
+            Metric::count("i", 1, MetricKind::Simulated, MetricMethod::Cachegrind).rankable_kind()
+        );
+        assert!(Metric::count("b", 1, MetricKind::Measured, MetricMethod::Stat).rankable_kind());
+        assert!(
+            !Metric::count("w", 1, MetricKind::Indicative, MetricMethod::WallClock).rankable_kind()
+        );
+        assert!(
+            !Metric::count("p", 1, MetricKind::Predicted, MetricMethod::LlvmMca).rankable_kind()
+        );
     }
 
     #[test]

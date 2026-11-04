@@ -15,6 +15,7 @@ use crate::cmd::{self, Fixable};
 use crate::context::Solution;
 use crate::pipeline::Pipeline;
 use crate::Format;
+use ccx_core::capsule::MetricKind;
 use ccx_core::throughput::McaReport;
 use serde::Serialize;
 use std::path::Path;
@@ -22,8 +23,9 @@ use std::path::Path;
 #[derive(Debug, Clone, Serialize)]
 pub struct ThroughputReport {
     pub toolchain: String,
-    /// Always `predicted`: this is a model, not a measurement.
-    pub kind: String,
+    /// Always `predicted`: this is a model, not a measurement. Typed as
+    /// `MetricKind` so the label can never drift from the canonical taxonomy.
+    pub kind: MetricKind,
     /// Whether a report was produced at all.
     pub available: bool,
     /// Why the report is unavailable, when it is.
@@ -52,7 +54,7 @@ pub fn run(format: Format, dir: &Path, mcpu: Option<&str>, iterations: u64) -> a
             .to_string();
         let report = ThroughputReport {
             toolchain: format!("{} {}", tc.name.profile_id(), tc.version),
-            kind: "predicted".to_string(),
+            kind: MetricKind::Predicted,
             available: false,
             unavailable_reason: Some(reason),
             report: None,
@@ -88,7 +90,7 @@ pub fn run(format: Format, dir: &Path, mcpu: Option<&str>, iterations: u64) -> a
 
     let report = ThroughputReport {
         toolchain: format!("{} {}", tc.name.profile_id(), tc.version),
-        kind: "predicted".to_string(),
+        kind: MetricKind::Predicted,
         available: true,
         unavailable_reason: None,
         report: Some(report),

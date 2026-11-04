@@ -4,7 +4,7 @@
 //! These helpers compute the spread that proves (or disproves) it, and the
 //! bootstrap confidence interval used for indicative wall-clock numbers.
 
-use super::{Metric, Spread, Uncertainty, UncertaintyKind};
+use super::{Metric, MetricKind, Spread, Uncertainty, UncertaintyKind};
 use serde::Serialize;
 use std::collections::BTreeMap;
 
@@ -24,8 +24,17 @@ pub fn ranking_eligibility(metric: Option<&Metric>, spread: Option<&Spread>) -> 
     let observed_spread_pct = spread.map(|value| value.spread_pct);
     let reason = match (metric, spread) {
         (None, _) => Some("ranked metric is absent".to_string()),
-        (Some(metric), _) if metric.machine_dependent() => {
-            Some("ranked metric depends on the host".to_string())
+        (Some(metric), _) if !metric.rankable_kind() => {
+            // Both machine-dependent kinds are refused, but with the reason
+            // that names what is actually wrong: an indicative number depends
+            // on the host, a predicted one on the model. `measured` and
+            // `simulated` fall through to the spread checks below.
+            Some(match metric.kind {
+                MetricKind::Predicted => {
+                    "ranked metric is a static prediction, not a run".to_string()
+                }
+                _ => "ranked metric depends on the host".to_string(),
+            })
         }
         (_, None) => Some("repeatability spread is unavailable".to_string()),
         (_, Some(spread)) if spread.samples < DEFAULT_RANKING_MINIMUM_RUNS => Some(format!(
@@ -227,6 +236,38 @@ mod tests {
             eligibility.reason.as_deref(),
             Some("ranked metric depends on the host")
         );
+    }
+
+    #[test]
+    fn ranking_eligibility_rejects_predicted_metrics_with_a_distinct_reason() {
+        // A predicted metric is deterministic and host-independent, so the
+        // spread checks would otherwise let it through. It must still be
+        // refused, and the reason must say *why* (a model, not a run).
+        let metric = Metric::count(
+            "modelled_cycles",
+            100,
+            super::super::MetricKind::Predicted,
+            super::super::MetricMethod::LlvmMca,
+        );
+        let eligibility = ranking_eligibility(Some(&metric), Some(&stable_spread(0.0, 20)));
+        assert!(!eligibility.eligible);
+        assert_eq!(
+            eligibility.reason.as_deref(),
+            Some("ranked metric is a static prediction, not a run")
+        );
+    }
+
+    #[test]
+    fn measured_metrics_are_rankable_kinds_but_still_need_a_tight_spread() {
+        let metric = Metric::count(
+            "binary_size",
+            100,
+            super::super::MetricKind::Measured,
+            super::super::MetricMethod::Stat,
+        );
+        assert!(metric.rankable_kind());
+        assert!(ranking_eligibility(Some(&metric), Some(&stable_spread(0.0, 20))).eligible);
+        assert!(!ranking_eligibility(Some(&metric), Some(&stable_spread(0.02, 20))).eligible);
     }
 
     #[test]

@@ -13,6 +13,7 @@ pub mod matrix;
 pub mod measure;
 pub mod memory;
 pub mod pareto;
+pub mod principles;
 pub mod profiles;
 pub mod repeat;
 pub mod replay;
