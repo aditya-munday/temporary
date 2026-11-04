@@ -10,3 +10,7 @@ docker/*.tar.xz
 # Local agent handoff notes, not part of the project.
 PHASE1_AGENT_PROMPT.txt
 ULTIMATE_RUNTIME_PROMPT.txt
+
+# Local auth helpers. These carry tokens; they must never be committed.
+scripts/gh-auth.sh
+scripts/temp-ci.sh

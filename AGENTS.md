@@ -471,6 +471,18 @@ Hard-won facts, each of which was a real bug:
     The file is read-only and cannot be reset per run, so a fresh container is
     the only way to get a clean cgroup reading.
 
+15. **Hosted CI is blocked at the account level, not by the code.** When the
+    account's Actions billing is blocked, GitHub refuses to start any job: every
+    job of a run fails in about 20 seconds with zero steps, no logs
+    (`BlobNotFound`), and a single check-run annotation reading *"The job was not
+    started because recent account payments have failed or your spending limit
+    needs to be increased."* The same commit can pass on a `pull_request` event
+    and fail on a later `push` event. Diagnose with `gh run view <id>` and read
+    the annotation; do not treat it as a code failure. To actually exercise the
+    workflow, mirror the tree to `aditya-munday/temporary` (a CI-only account)
+    and run there, then delete the mirror copy — see the standing repository and
+    CI operating rules above.
+
 ### Known-honest results (not bugs)
 
 - `ccx test` runs the arena solution at every size in `problem.json`
@@ -531,3 +543,23 @@ after a host restart. If `cargo` is missing, reinstall with
 `scripts/pin-toolchains.sh`, which rewrites `docker/toolchains.lock.json`; that
 lock file is embedded in the binary via `include_str!`, so rebuild after
 regenerating it.
+
+### Repository and CI operating rules (standing)
+
+- **The real repository is `Penultimatum-Tech/CodeCurrency-Runtime`.** All
+  commits, branches, and pull requests go there. Never push project code
+  anywhere else.
+- **`aditya-munday/temporary` is a CI-only mirror.** GitHub Actions on the real
+  account are blocked at the account level (Actions billing; see hard-won fact
+  12), so hosted jobs never start there. The mirror exists purely to run the
+  same workflow on a working account. Push a throwaway copy of the tree there
+  to exercise CI, read the results, then **delete the mirror's copy**. The
+  mirror is never a source of truth and must never receive a change that does
+  not also exist on the real repository.
+- **Authentication.** `scripts/gh-auth.sh` authenticates `gh`/git as
+  `Penultimatum-Tech` (the real repo); `scripts/temp-ci.sh` authenticates as
+  `aditya-munday` (the mirror). Both scripts hold tokens, are git-ignored, and
+  must never be committed. Re-authenticate with the relevant script before
+  pushing to that host.
+- **Do not wait on CI.** After starting a workflow run, continue with the next
+  part of the work order and collect the run result later.
